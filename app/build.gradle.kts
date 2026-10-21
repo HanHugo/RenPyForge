@@ -16,9 +16,21 @@ android {
         versionName = "0.6.10"
     }
 
+    signingConfigs {
+        create("release") {
+            // 公开的 CI 签名密钥：保证任何人构建出的 APK 签名一致、可互相覆盖安装。
+            // 正式对外发布请替换为你自己的密钥（见 README）。
+            storeFile = file("../keystore/release.keystore")
+            storePassword = "renpyforge"
+            keyAlias = "renpyforge"
+            keyPassword = "renpyforge"
+        }
+    }
+
     buildTypes {
         release {
             isMinifyEnabled = false
+            signingConfig = signingConfigs.getByName("release")
             proguardFiles(getDefaultProguardFile("proguard-android-optimize.txt"), "proguard-rules.pro")
         }
     }
