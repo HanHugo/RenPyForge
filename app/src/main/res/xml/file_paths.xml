@@ -1,0 +1,8 @@
+<?xml version="1.0" encoding="utf-8"?>
+<paths>
+    <!-- 私有目录产物（未授权存储时的回退位置） -->
+    <files-path name="output" path="output/" />
+    <!-- 外部存储产物：/storage/emulated/0/RenPyForge/output/ -->
+    <external-path name="forge_output" path="RenPyForge/output/" />
+    <external-path name="external_root" path="." />
+</paths>
