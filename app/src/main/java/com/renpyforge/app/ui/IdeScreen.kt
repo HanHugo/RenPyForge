@@ -1381,27 +1381,54 @@ game/characters.rpy  ← 角色定义""",
         "developer 模式解锁 Ren'Py 全套调试工具；出错时的 traceback 会精确到行号。",
     ),
     ManualSection(
-        "热重载（进阶技巧）", """# 通用做法：监视文件 → 主线程回调 → 快速重启
+        "热重载（进阶技巧）", """# 监视文件 → 主线程回调 → 快速重启
 init python:
     import threading, time, os
+    HOTLOAD = "/sdcard/RenPyForge/hotload"   # 改动后的文件放这里（保持相对路径）
+
+    def _rf_target(rel):
+        # 关键：APK 里的脚本以 x- 前缀虚拟名加载（每级一段），
+        # 同步文件必须写成同名 x- 文件才能覆盖资产版本，
+        # 否则会加载两份脚本，触发 default/label 重复定义报错。
+        parts = rel.split("/")
+        return os.path.join(renpy.config.gamedir, *("x-" + p for p in parts))
+
     _state = {"dirty": False}
+
+    def _rf_sync():
+        for root, dirs, files in os.walk(HOTLOAD):
+            rel_root = os.path.relpath(root, HOTLOAD)
+            for f in files:
+                rel = f if rel_root == "." else rel_root + "/" + f
+                src = os.path.join(root, f)
+                dst = _rf_target(rel)
+                os.makedirs(os.path.dirname(dst), exist_ok=True)
+                with open(src, "rb") as a, open(dst, "wb") as b:
+                    b.write(a.read())
+                if dst.endswith(".rpy"):        # 删旧缓存，强制重编译
+                    try: os.unlink(dst + "c")
+                    except OSError: pass
 
     def _rf_watch():
         while True:
-            if _files_changed():        # 自行实现 mtime 轮询
+            if _hotload_changed():              # 自行实现 mtime 轮询
                 _state["dirty"] = True
             time.sleep(2)
 
     def _rf_on_interact():
         if _state["dirty"]:
             _state["dirty"] = False
-            renpy.utter_restart()       # 进程内快速重启（回到开场）
+            _rf_sync()
+            renpy.utter_restart()               # 进程内快速重启（回到开场）
 
     config.interact_callbacks.append(_rf_on_interact)
     threading.Thread(target=_rf_watch, daemon=True).start()""",
-        "关键点：① 重启必须发生在主线程（interact 回调里），监视线程只负责置标志；" +
-            "② utter_restart 秒级生效但回到开场，要保留进度可改用 renpy.reload_script()（要求改动是增量的）；" +
-            "③ 外部目录用应用专属目录（Android/data/<包名>/files/）可免权限读写，适合作为同步通道。",
+        "关键点：① 重启必须在主线程（interact 回调），监视线程只置标志；" +
+            "② 同步文件必须按 x- 前缀命名（见 _rf_target），否则同一脚本被加载两份，" +
+            "报 “is being given a default a second time” 或 label 重复定义；" +
+            "③ utter_restart 秒级生效但回到开场，要保留进度可改用 renpy.reload_script()；" +
+            "④ 同步目录用普通共享目录（如 /sdcard/RenPyForge/hotload），游戏读它需要" +
+            "系统设置里授予该游戏「所有文件访问」权限。",
     ),
     ManualSection(
         "常见问题", """✘ 构建失败 → 看构建面板控制台的 ✘ 行
