@@ -66,6 +66,30 @@ fun CodeEditor(
     var findIdx by remember { mutableIntStateOf(0) }
     val clipboard = LocalClipboardManager.current
 
+    // —— 撤销/重做 ——
+    val undoStack = remember(path) { mutableListOf<TextFieldValue>() }
+    val redoStack = remember(path) { mutableListOf<TextFieldValue>() }
+    fun applyValue(v: TextFieldValue, fromUser: Boolean) {
+        if (fromUser && v.text != value.text) {
+            undoStack.add(value)
+            if (undoStack.size > 300) undoStack.removeAt(0)
+            redoStack.clear()
+        }
+        value = v
+    }
+    fun undo() {
+        val prev = undoStack.removeLastOrNull() ?: return
+        redoStack.add(value)
+        value = prev
+        onContentChange(value.text)
+    }
+    fun redo() {
+        val next = redoStack.removeLastOrNull() ?: return
+        undoStack.add(value)
+        value = next
+        onContentChange(value.text)
+    }
+
     LaunchedEffect(content) {
         if (value.text != content) value = TextFieldValue(content)
     }
@@ -103,7 +127,7 @@ fun CodeEditor(
         val e = value.selection.max
         val newText = value.text.substring(0, s) + insert + value.text.substring(e)
         val pos = (s + cursorOffsetInInsert).coerceAtMost(newText.length)
-        value = TextFieldValue(newText, TextRange(pos))
+        applyValue(TextFieldValue(newText, TextRange(pos)), fromUser = true)
         onContentChange(newText)
     }
 
@@ -188,6 +212,35 @@ fun CodeEditor(
             EditorAction("粘贴") {
                 clipboard.getText()?.text?.let { replaceSelection(it) }
             }
+            EditorAction("↶", enabled = undoStack.isNotEmpty()) { undo() }
+            EditorAction("↷", enabled = redoStack.isNotEmpty()) { redo() }
+            // 代码模板插入
+            var showTemplates by remember { mutableStateOf(false) }
+            Box {
+                EditorAction("模板") { showTemplates = true }
+                androidx.compose.material3.DropdownMenu(
+                    expanded = showTemplates,
+                    onDismissRequest = { showTemplates = false },
+                    containerColor = IdeColors.PanelBg,
+                ) {
+                    val templates = listOf(
+                        "label 场景" to "label start:\n    \n    return",
+                        "menu 选项" to "menu:\n    \"选项一\":\n        jump next\n    \"选项二\":\n        jump other",
+                        "对话文本" to "\"角色名\" \"对话内容\"",
+                        "screen 界面" to "screen my_screen():\n    vbox:\n        text \"内容\"\n        textbutton \"关闭\" action Return()",
+                        "transform 动画" to "transform slidein:\n    xoffset -400\n    easein 0.5 xoffset 0",
+                    )
+                    templates.forEach { (name, code) ->
+                        androidx.compose.material3.DropdownMenuItem(
+                            text = { androidx.compose.material3.Text(name, fontSize = 13.sp) },
+                            onClick = {
+                                replaceSelection(code)
+                                showTemplates = false
+                            },
+                        )
+                    }
+                }
+            }
             Box(
                 Modifier
                     .padding(horizontal = 6.dp)
@@ -263,7 +316,7 @@ fun CodeEditor(
                 val lineStart = value.text.lastIndexOf('\n', (s - 1).coerceAtLeast(0)) + 1
                 if (value.text.substring(lineStart, s.coerceAtLeast(lineStart)).startsWith("    ") && s - lineStart >= 4) {
                     val newText = value.text.removeRange(lineStart, lineStart + 4)
-                    value = TextFieldValue(newText, TextRange((s - 4).coerceAtLeast(0)))
+                    applyValue(TextFieldValue(newText, TextRange((s - 4).coerceAtLeast(0))), fromUser = true)
                     onContentChange(newText)
                 }
             }
@@ -325,7 +378,10 @@ fun CodeEditor(
                 }
                 BasicTextField(
                     value = value,
-                    onValueChange = { value = it; onContentChange(it.text) },
+                    onValueChange = {
+                        applyValue(it, fromUser = true)
+                        onContentChange(value.text)
+                    },
                     textStyle = editorStyle,
                     cursorBrush = SolidColor(IdeColors.Accent),
                     visualTransformation = transform,
@@ -337,13 +393,13 @@ fun CodeEditor(
 }
 
 @Composable
-private fun EditorAction(label: String, onClick: () -> Unit) {
+private fun EditorAction(label: String, enabled: Boolean = true, onClick: () -> Unit) {
     androidx.compose.material3.Text(
         label,
         fontSize = 12.sp,
-        color = IdeColors.TextFg,
+        color = if (enabled) IdeColors.TextFg else IdeColors.TextDim.copy(alpha = 0.4f),
         modifier = Modifier
-            .clickable(onClick = onClick)
+            .clickable(enabled = enabled, onClick = onClick)
             .padding(horizontal = 10.dp, vertical = 6.dp),
     )
 }

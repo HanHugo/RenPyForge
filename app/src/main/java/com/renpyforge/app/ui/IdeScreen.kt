@@ -20,6 +20,7 @@ import androidx.compose.animation.togetherWith
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.combinedClickable
 import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
@@ -53,11 +54,13 @@ import androidx.compose.material.icons.filled.InstallMobile
 import androidx.compose.material.icons.filled.Menu
 import androidx.compose.material.icons.filled.PlayArrow
 import androidx.compose.material.icons.filled.Save
+import androidx.compose.material.icons.filled.Search
 import androidx.compose.material.icons.filled.Terminal
 import androidx.compose.material3.Button
 import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.DrawerValue
 import androidx.compose.material3.ExperimentalMaterial3Api
+import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.LinearProgressIndicator
@@ -123,6 +126,8 @@ fun IdeScreen(
     var panelTab by remember { mutableIntStateOf(0) }
     var showNewFile by remember { mutableStateOf(false) }
     var showManual by remember { mutableStateOf(false) }
+    var showSearch by remember { mutableStateOf(false) }
+    var renameTarget by remember { mutableStateOf<String?>(null) }
 
     // 打开面板时刷新构建历史与资源列表
     LaunchedEffect(panelOpen) {
@@ -148,6 +153,7 @@ fun IdeScreen(
                     onClose = { scope.launch { drawerState.close() } },
                     onNewFile = { showNewFile = true },
                     onCloseProject = { viewModel.closeProject() },
+                    onRename = { renameTarget = it },
                 )
             }
         },
@@ -165,6 +171,7 @@ fun IdeScreen(
                     panelOpen = panelOpen,
                     onSave = { viewModel.saveAllTabs() },
                     onManual = { showManual = true },
+                    onSearch = { showSearch = true },
                 )
             },
             bottomBar = {
@@ -231,6 +238,13 @@ fun IdeScreen(
 
     if (showNewFile) NewFileDialog(viewModel) { showNewFile = false }
     if (showManual) ManualSheet { showManual = false }
+    if (showSearch) GlobalSearchSheet(viewModel) { showSearch = false }
+    renameTarget?.let { target ->
+        RenameDialog(target) { newName ->
+            if (newName != null) viewModel.renameGameFile(target, newName)
+            renameTarget = null
+        }
+    }
 }
 
 // ═══════════════════════ 顶栏 ═══════════════════════
@@ -243,6 +257,7 @@ private fun IdeTopBar(
     panelOpen: Boolean,
     onSave: () -> Unit,
     onManual: () -> Unit,
+    onSearch: () -> Unit,
 ) {
     Column {
         TopAppBar(
@@ -280,6 +295,9 @@ private fun IdeTopBar(
                 }
                 IconButton(onClick = onManual) {
                     Icon(Icons.AutoMirrored.Filled.MenuBook, contentDescription = "代码手册", modifier = Modifier.size(20.dp))
+                }
+                IconButton(onClick = onSearch) {
+                    Icon(Icons.Filled.Search, contentDescription = "全局搜索", modifier = Modifier.size(20.dp))
                 }
                 IconButton(onClick = onPanelToggle) {
                     Icon(
@@ -436,6 +454,7 @@ private fun FileTreePanel(
     onClose: () -> Unit,
     onNewFile: () -> Unit,
     onCloseProject: () -> Unit,
+    onRename: (String) -> Unit,
 ) {
     Column(Modifier.fillMaxSize()) {
         Row(
@@ -454,7 +473,13 @@ private fun FileTreePanel(
             }
         }
         Box(Modifier.fillMaxWidth().height(1.dp).background(IdeColors.PanelBorder))
-        FileTreeList(viewModel)
+        Text(
+            "长按文件可重命名",
+            fontSize = 10.sp,
+            color = IdeColors.TextDim.copy(alpha = 0.6f),
+            modifier = Modifier.padding(horizontal = 16.dp, vertical = 4.dp),
+        )
+        FileTreeList(viewModel, onRename)
         Box(Modifier.fillMaxWidth().height(1.dp).background(IdeColors.PanelBorder))
         // 抽屉底部动作
         Row(
@@ -521,7 +546,7 @@ private fun flattenTree(root: FsNode, expanded: Set<String>): List<TreeNode2> {
 }
 
 @Composable
-private fun FileTreeList(viewModel: ProjectViewModel) {
+private fun FileTreeList(viewModel: ProjectViewModel, onRename: (String) -> Unit) {
     val tree = remember(viewModel.gameFiles) { buildFileTree(viewModel.gameFiles) }
     var expanded by remember(viewModel.gameFiles) {
         mutableStateOf(tree.dirs.values.map { it.path }.toSet())
@@ -559,14 +584,15 @@ private fun FileTreeList(viewModel: ProjectViewModel) {
                         Text(node.name, fontSize = 13.sp, fontFamily = FontFamily.Monospace)
                     }
                 }
-                is TreeFile -> FileRow(node, viewModel)
+                is TreeFile -> FileRow(node, viewModel, onRename)
             }
         }
     }
 }
 
+@OptIn(androidx.compose.foundation.ExperimentalFoundationApi::class)
 @Composable
-private fun FileRow(node: TreeFile, viewModel: ProjectViewModel) {
+private fun FileRow(node: TreeFile, viewModel: ProjectViewModel, onRename: (String) -> Unit) {
     val active = node.path == viewModel.activeTab
     val bg by animateColorAsState(
         if (active) IdeColors.SelectedBg else Color.Transparent,
@@ -577,7 +603,10 @@ private fun FileRow(node: TreeFile, viewModel: ProjectViewModel) {
         modifier = Modifier
             .fillMaxWidth()
             .background(bg)
-            .clickable { viewModel.openGameFile(node.path) }
+            .combinedClickable(
+                onClick = { viewModel.openGameFile(node.path) },
+                onLongClick = { onRename(node.path) },
+            )
             .padding(start = (40 + node.depth * 16).dp, end = 8.dp, top = 6.dp, bottom = 6.dp),
     ) {
         Box(
@@ -1358,4 +1387,129 @@ private fun ManualSheet(onDismiss: () -> Unit) {
             }
         }
     }
+}
+
+// ═══════════════════════ 全局搜索 ═══════════════════════
+
+@Composable
+private fun GlobalSearchSheet(
+    viewModel: ProjectViewModel,
+    onDismiss: () -> Unit,
+) {
+    var query by remember { mutableStateOf("") }
+    ModalBottomSheet(
+        onDismissRequest = onDismiss,
+        sheetState = rememberModalBottomSheetState(skipPartiallyExpanded = true),
+        containerColor = IdeColors.PanelBg,
+        contentColor = IdeColors.TextFg,
+    ) {
+        Column(Modifier.padding(horizontal = 16.dp)) {
+            Text("全局搜索", fontSize = 18.sp, fontWeight = FontWeight.Bold)
+            Text(
+                "在项目所有脚本中查找文本，点击结果直接跳转",
+                fontSize = 11.sp, color = IdeColors.TextDim,
+                modifier = Modifier.padding(top = 2.dp, bottom = 10.dp),
+            )
+            OutlinedTextField(
+                value = query,
+                onValueChange = {
+                    query = it
+                    viewModel.globalSearch(it)
+                },
+                label = { Text("搜索内容") },
+                singleLine = true,
+                modifier = Modifier.fillMaxWidth(),
+            )
+            Spacer(Modifier.height(8.dp))
+            Text(
+                when {
+                    query.isBlank() -> "输入关键词开始搜索"
+                    viewModel.searching -> "搜索中…"
+                    viewModel.searchResults.isEmpty() -> "没有匹配结果"
+                    else -> "共 ${viewModel.searchResults.size} 条结果"
+                },
+                fontSize = 11.sp, color = IdeColors.TextDim,
+            )
+        }
+        LazyColumn(
+            Modifier.fillMaxWidth().padding(horizontal = 16.dp),
+            contentPadding = PaddingValues(bottom = 32.dp),
+        ) {
+            items(viewModel.searchResults.size, key = { idx ->
+                "${viewModel.searchResults[idx].path}:${viewModel.searchResults[idx].line}:$idx"
+            }) { idx ->
+                val hit = viewModel.searchResults[idx]
+                Column(
+                    Modifier
+                        .fillMaxWidth()
+                        .clickable {
+                            viewModel.openGameFile(hit.path)
+                            viewModel.requestJump(hit.line, 1)
+                            onDismiss()
+                        }
+                        .padding(vertical = 8.dp)
+                ) {
+                    Row {
+                        Text(
+                            hit.path,
+                            fontSize = 11.sp,
+                            fontFamily = FontFamily.Monospace,
+                            color = IdeColors.Accent,
+                        )
+                        Text(
+                            "  Ln ${hit.line}",
+                            fontSize = 11.sp,
+                            fontFamily = FontFamily.Monospace,
+                            color = IdeColors.TextDim,
+                        )
+                    }
+                    Text(
+                        hit.text,
+                        fontSize = 12.sp,
+                        fontFamily = FontFamily.Monospace,
+                        color = IdeColors.ConsoleFg,
+                        maxLines = 2,
+                        overflow = TextOverflow.Ellipsis,
+                    )
+                }
+                HorizontalDivider(color = IdeColors.PanelBorder.copy(alpha = 0.5f))
+            }
+        }
+    }
+}
+
+// ═══════════════════════ 重命名对话框 ═══════════════════════
+
+@Composable
+private fun RenameDialog(path: String, onConfirm: (String?) -> Unit) {
+    var name by remember(path) { mutableStateOf(path.substringAfterLast('/').removeSuffix(".rpy")) }
+    androidx.compose.material3.AlertDialog(
+        onDismissRequest = { onConfirm(null) },
+        containerColor = IdeColors.PanelBg,
+        title = { Text("重命名文件") },
+        text = {
+            Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                Text(
+                    path,
+                    fontSize = 11.sp,
+                    fontFamily = FontFamily.Monospace,
+                    color = IdeColors.TextDim,
+                )
+                OutlinedTextField(
+                    value = name,
+                    onValueChange = { name = it },
+                    label = { Text("新名称（自动保留 .rpy）") },
+                    singleLine = true,
+                )
+                Text(
+                    "也可以填写相对路径来移动文件，如 gui/custom.rpy",
+                    fontSize = 11.sp, color = IdeColors.TextDim,
+                )
+            }
+        },
+        confirmButton = {
+            TextButton(onClick = { onConfirm(name) }) { Text("确定") }
+        },
+        dismissButton = { TextButton(onClick = { onConfirm(null) }) { Text("取消") } },
+    )
 }

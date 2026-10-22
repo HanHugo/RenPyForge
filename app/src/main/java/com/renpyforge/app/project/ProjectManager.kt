@@ -87,6 +87,15 @@ class ProjectManager(private val context: Context) {
         return f.delete()
     }
 
+    /** 重命名/移动文件（newRel 可以带目录） */
+    fun renameFile(name: String, oldRel: String, newRel: String): Boolean {
+        val from = safeFile(name, oldRel) ?: return false
+        val to = safeFile(name, newRel) ?: return false
+        if (!from.isFile || from == to) return false
+        to.parentFile?.mkdirs()
+        return from.renameTo(to)
+    }
+
     /** 防路径穿越：解析后必须仍在该项目的 game/ 内 */
     private fun safeFile(name: String, relPath: String): File? {
         val base = gameDir(name).canonicalFile

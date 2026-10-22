@@ -294,6 +294,73 @@ class ProjectViewModel(private val context: Context) {
         gameFiles = projects.listGameFiles(project)
     }
 
+    /** 重命名/移动脚本（newName 可含相对路径）；同步更新打开的标签与缓存 */
+    fun renameGameFile(oldRel: String, newName: String) {
+        val project = currentProject ?: return
+        val trimmed = newName.trim().replace('\\', '/')
+        if (trimmed.isEmpty()) return
+        val newRel = if (trimmed.endsWith(".rpy") || trimmed.endsWith(".rpym") || trimmed.contains('/')) {
+            if (trimmed.contains('/')) trimmed
+            else oldRel.substringBeforeLast('/', "") + "/" + trimmed
+        } else {
+            oldRel.substringBeforeLast('/', "") + "/" + trimmed + ".rpy"
+        }
+        val normalized = newRel.split('/').filter { it.isNotEmpty() }.joinToString("/")
+        scope.launch(Dispatchers.IO) {
+            val ok = projects.renameFile(project, oldRel, normalized)
+            if (!ok) return@launch
+            withContext(Dispatchers.Main) {
+                val idx = openTabs.indexOf(oldRel)
+                if (idx >= 0) openTabs[idx] = normalized
+                tabContents.remove(oldRel)?.let { tabContents[normalized] = it }
+                if (dirtyTabs.contains(oldRel)) {
+                    dirtyTabs[dirtyTabs.indexOf(oldRel)] = normalized
+                }
+                if (activeTab == oldRel) {
+                    activeTab = normalized
+                    activeContent = tabContents[normalized] ?: ""
+                }
+                gameFiles = projects.listGameFiles(project)
+                statusMessage = "已重命名为 $normalized"
+            }
+        }
+    }
+
+    // —— 全局搜索 ——
+    data class SearchHit(val path: String, val line: Int, val text: String)
+    val searchResults = mutableStateListOf<SearchHit>()
+    var searching by mutableStateOf(false)
+        private set
+
+    fun globalSearch(query: String) {
+        val q = query.trim()
+        searchResults.clear()
+        if (q.isEmpty() || currentProject == null) return
+        searching = true
+        scope.launch(Dispatchers.IO) {
+            val hits = mutableListOf<SearchHit>()
+            for (path in gameFiles) {
+                val text = tabContents[path] ?: runCatching { projects.readFile(currentProject!!, path) }.getOrDefault("")
+                if (text.isEmpty()) continue
+                var lineNo = 0
+                for (rawLine in text.lineSequence()) {
+                    lineNo++
+                    val i = rawLine.indexOf(q, ignoreCase = true)
+                    if (i >= 0) {
+                        hits.add(SearchHit(path, lineNo, rawLine.trim().take(120)))
+                        if (hits.size >= 300) break
+                    }
+                }
+                if (hits.size >= 300) break
+            }
+            withContext(Dispatchers.Main) {
+                searchResults.clear()
+                searchResults.addAll(hits)
+                searching = false
+            }
+        }
+    }
+
     // —— 终端 ——
     fun runTerminalCommand(raw: String) {
         val cmd = raw.trim()
