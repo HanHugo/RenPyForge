@@ -1,5 +1,11 @@
 package com.renpyforge.app.ui
 
+import androidx.compose.animation.AnimatedVisibility
+import androidx.compose.animation.core.tween
+import androidx.compose.animation.expandVertically
+import androidx.compose.animation.fadeIn
+import androidx.compose.animation.fadeOut
+import androidx.compose.animation.shrinkVertically
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
@@ -9,13 +15,14 @@ import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
+import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
-import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.text.BasicTextField
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material3.Text
@@ -26,13 +33,12 @@ import androidx.compose.runtime.mutableFloatStateOf
 import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.SolidColor
 import androidx.compose.ui.input.pointer.pointerInput
-import androidx.compose.ui.platform.LocalClipboardManager
 import androidx.compose.ui.platform.LocalDensity
-import androidx.compose.ui.text.AnnotatedString
 import androidx.compose.ui.text.TextRange
 import androidx.compose.ui.text.TextStyle
 import androidx.compose.ui.text.font.FontFamily
@@ -47,13 +53,20 @@ import kotlinx.coroutines.launch
 private const val LINE_HEIGHT_SP = 20
 private const val BASE_FONT_SP = 13
 
-/** 代码编辑器：行号 + 语法高亮 + 剪贴板工具条 + 快捷符号栏 + 双指缩放 */
+/**
+ * 代码编辑器（干净版）：
+ * · 编辑区就是编辑区——没有任何常驻按钮行，复制粘贴用系统文本选择菜单
+ * · 「工具行」默认隐藏（撤销/重做/查找/插入代码），由外部开关控制
+ * · 符号条固定在编辑器底部（紧贴输入法，代码符号一键输入）
+ * · 双指缩放字号；行号 + 语法高亮
+ */
 @Composable
 fun CodeEditor(
     path: String,
     content: String,
     onContentChange: (String) -> Unit,
     onCursorMoved: (line: Int, col: Int) -> Unit,
+    showTools: Boolean,
     jumpLine: Int = 0,
     onJumpConsumed: () -> Unit = {},
     modifier: Modifier = Modifier,
@@ -64,31 +77,7 @@ fun CodeEditor(
     var showFind by remember { mutableStateOf(false) }
     var findQuery by remember { mutableStateOf("") }
     var findIdx by remember { mutableIntStateOf(0) }
-    val clipboard = LocalClipboardManager.current
-
-    // —— 撤销/重做 ——
-    val undoStack = remember(path) { mutableListOf<TextFieldValue>() }
-    val redoStack = remember(path) { mutableListOf<TextFieldValue>() }
-    fun applyValue(v: TextFieldValue, fromUser: Boolean) {
-        if (fromUser && v.text != value.text) {
-            undoStack.add(value)
-            if (undoStack.size > 300) undoStack.removeAt(0)
-            redoStack.clear()
-        }
-        value = v
-    }
-    fun undo() {
-        val prev = undoStack.removeLastOrNull() ?: return
-        redoStack.add(value)
-        value = prev
-        onContentChange(value.text)
-    }
-    fun redo() {
-        val next = redoStack.removeLastOrNull() ?: return
-        undoStack.add(value)
-        value = next
-        onContentChange(value.text)
-    }
+    var showInsert by remember { mutableStateOf(false) }
 
     LaunchedEffect(content) {
         if (value.text != content) value = TextFieldValue(content)
@@ -104,6 +93,7 @@ fun CodeEditor(
     val density = LocalDensity.current
     val lineHeightDp = with(density) { lineSp.sp.toDp() }
     val lineCount = value.text.count { it == '\n' } + 1
+    val linePx = with(density) { lineSp.sp.toPx() }
 
     val editorStyle = TextStyle(
         fontFamily = FontFamily.Monospace,
@@ -116,23 +106,33 @@ fun CodeEditor(
         ),
     )
 
-    // —— 编辑操作 ——
-    fun commitSelection(range: TextRange) { value = value.copy(selection = range) }
-
-    fun selText(): String =
-        if (value.selection.collapsed) "" else value.text.substring(value.selection.min, value.selection.max)
-
+    // —— 编辑核心操作 ——
+    val undoStack = remember(path) { mutableListOf<TextFieldValue>() }
+    val redoStack = remember(path) { mutableListOf<TextFieldValue>() }
     fun replaceSelection(insert: String, cursorOffsetInInsert: Int = insert.length) {
         val s = value.selection.min
         val e = value.selection.max
         val newText = value.text.substring(0, s) + insert + value.text.substring(e)
-        val pos = (s + cursorOffsetInInsert).coerceAtMost(newText.length)
-        applyValue(TextFieldValue(newText, TextRange(pos)), fromUser = true)
+        val pos = (s + cursorOffsetInInsert).coerceIn(0, newText.length)
+        undoStack.add(value)
+        if (undoStack.size > 300) undoStack.removeAt(0)
+        redoStack.clear()
+        value = TextFieldValue(newText, TextRange(pos))
         onContentChange(newText)
     }
-
+    fun undo() {
+        val prev = undoStack.removeLastOrNull() ?: return
+        redoStack.add(value)
+        value = prev
+        onContentChange(value.text)
+    }
+    fun redo() {
+        val next = redoStack.removeLastOrNull() ?: return
+        undoStack.add(value)
+        value = next
+        onContentChange(value.text)
+    }
     fun insertSymbol(sym: String) {
-        // 自动补对：光标落在括号/引号对中间
         val pair = mapOf("(" to ")", "[" to "]", "{" to "}", "\"" to "\"", "'" to "'")
         val close = pair[sym]
         if (close != null && value.selection.collapsed) {
@@ -144,10 +144,8 @@ fun CodeEditor(
 
     val vScroll = rememberScrollState()
     val hScroll = rememberScrollState()
+    val scope = rememberCoroutineScope()
 
-    // —— 查找 ——
-    val linePx = with(density) { lineSp.sp.toPx() }
-    val findScope = androidx.compose.runtime.rememberCoroutineScope()
     fun findMatches(): List<Int> {
         val q = findQuery.trim()
         if (q.isEmpty()) return emptyList()
@@ -164,11 +162,10 @@ fun CodeEditor(
         val pos = matches[findIdx]
         value = value.copy(selection = TextRange(pos, pos + findQuery.trim().length))
         val line = value.text.substring(0, pos).count { it == '\n' }
-        val target = ((line - 2) * linePx).toInt().coerceIn(0, vScroll.maxValue)
-        findScope.launch { vScroll.animateScrollTo(target) }
+        scope.launch { vScroll.animateScrollTo(((line - 2) * linePx).toInt().coerceIn(0, vScroll.maxValue)) }
     }
 
-    // 问题列表跳转：滚动到指定行并整行选中
+    // 问题列表跳转
     LaunchedEffect(jumpLine) {
         if (jumpLine > 0) {
             val text = value.text
@@ -181,89 +178,67 @@ fun CodeEditor(
             if (pos <= text.length) {
                 val lineEnd = text.indexOf('\n', pos).let { if (it == -1) text.length else it }
                 value = value.copy(selection = TextRange(pos, lineEnd))
-                val target = ((jumpLine - 2) * linePx).toInt().coerceIn(0, vScroll.maxValue)
-                findScope.launch { vScroll.animateScrollTo(target) }
+                scope.launch { vScroll.animateScrollTo(((jumpLine - 2) * linePx).toInt().coerceIn(0, vScroll.maxValue)) }
             }
             onJumpConsumed()
         }
     }
 
     Column(modifier.background(IdeColors.EditorBg)) {
-        // ── 工具条：剪贴板操作 + 缩放 ──
-        Row(
-            verticalAlignment = androidx.compose.ui.Alignment.CenterVertically,
-            modifier = Modifier
-                .fillMaxWidth()
-                .background(IdeColors.PanelBg)
-                .height(32.dp),
+        // ── 工具行（默认隐藏，⋮ → 编辑工具 开启） ──
+        AnimatedVisibility(
+            visible = showTools,
+            enter = expandVertically(tween(160)) + fadeIn(),
+            exit = shrinkVertically(tween(160)) + fadeOut(),
         ) {
-            EditorAction("全选") { commitSelection(TextRange(0, value.text.length)) }
-            EditorAction("复制") {
-                val t = selText()
-                if (t.isNotEmpty()) clipboard.setText(AnnotatedString(t))
+            Row(
+                verticalAlignment = androidx.compose.ui.Alignment.CenterVertically,
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .horizontalScroll(rememberScrollState())
+                    .background(IdeColors.PanelBg)
+                    .height(32.dp),
+            ) {
+                EditorAction("↶ 撤销", enabled = undoStack.isNotEmpty()) { undo() }
+                EditorAction("↷ 重做", enabled = redoStack.isNotEmpty()) { redo() }
+                EditorAction(if (showFind) "收起查找" else "查找") { showFind = !showFind }
+                EditorAction("插入代码") { showInsert = !showInsert }
             }
-            EditorAction("剪切") {
-                val t = selText()
-                if (t.isNotEmpty()) {
-                    clipboard.setText(AnnotatedString(t))
-                    replaceSelection("")
-                }
-            }
-            EditorAction("粘贴") {
-                clipboard.getText()?.text?.let { replaceSelection(it) }
-            }
-            EditorAction("↶", enabled = undoStack.isNotEmpty()) { undo() }
-            EditorAction("↷", enabled = redoStack.isNotEmpty()) { redo() }
-            // 代码模板插入
-            var showTemplates by remember { mutableStateOf(false) }
-            Box {
-                EditorAction("模板") { showTemplates = true }
-                androidx.compose.material3.DropdownMenu(
-                    expanded = showTemplates,
-                    onDismissRequest = { showTemplates = false },
-                    containerColor = IdeColors.PanelBg,
-                ) {
-                    val templates = listOf(
-                        "label 场景" to "label start:\n    \n    return",
-                        "menu 选项" to "menu:\n    \"选项一\":\n        jump next\n    \"选项二\":\n        jump other",
-                        "对话文本" to "\"角色名\" \"对话内容\"",
-                        "screen 界面" to "screen my_screen():\n    vbox:\n        text \"内容\"\n        textbutton \"关闭\" action Return()",
-                        "transform 动画" to "transform slidein:\n    xoffset -400\n    easein 0.5 xoffset 0",
-                    )
-                    templates.forEach { (name, code) ->
-                        androidx.compose.material3.DropdownMenuItem(
-                            text = { androidx.compose.material3.Text(name, fontSize = 13.sp) },
-                            onClick = {
-                                replaceSelection(code)
-                                showTemplates = false
-                            },
-                        )
-                    }
-                }
-            }
-            Box(
-                Modifier
-                    .padding(horizontal = 6.dp)
-                    .height(16.dp)
-                    .width(1.dp)
-                    .background(IdeColors.PanelBorder)
-            )
-            EditorAction("A−") { fontScale = (fontScale - 0.15f).coerceAtLeast(0.5f) }
-            EditorAction("A+") { fontScale = (fontScale + 0.15f).coerceAtMost(2.5f) }
-            Box(
-                Modifier
-                    .padding(horizontal = 6.dp)
-                    .height(16.dp)
-                    .width(1.dp)
-                    .background(IdeColors.PanelBorder)
-            )
-            EditorAction(if (showFind) "收起查找" else "查找") { showFind = !showFind }
         }
-        // ── 查找栏 ──
-        androidx.compose.animation.AnimatedVisibility(
+        // 插入代码菜单（横滑选择）
+        AnimatedVisibility(
+            visible = showInsert,
+            enter = expandVertically(tween(160)) + fadeIn(),
+            exit = shrinkVertically(tween(160)) + fadeOut(),
+        ) {
+            Row(
+                verticalAlignment = androidx.compose.ui.Alignment.CenterVertically,
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .horizontalScroll(rememberScrollState())
+                    .background(IdeColors.ConsoleBg)
+                    .height(34.dp)
+                    .padding(horizontal = 6.dp),
+                horizontalArrangement = Arrangement.spacedBy(4.dp),
+            ) {
+                Text("插入：", fontSize = 11.sp, color = IdeColors.TextDim)
+                val templates = listOf(
+                    "label" to "label start:\n    \n    return",
+                    "menu" to "menu:\n    \"选项一\":\n        jump next\n    \"选项二\":\n        jump other",
+                    "对话" to "\"角色名\" \"对话内容\"",
+                    "screen" to "screen my_screen():\n    vbox:\n        text \"内容\"\n        textbutton \"关闭\" action Return()",
+                    "transform" to "transform slidein:\n    xoffset -400\n    easein 0.5 xoffset 0",
+                )
+                templates.forEach { (name, code) ->
+                    SymbolKey(name) { replaceSelection(code) }
+                }
+            }
+        }
+        // 查找栏
+        AnimatedVisibility(
             visible = showFind,
-            enter = androidx.compose.animation.expandVertically() + androidx.compose.animation.fadeIn(),
-            exit = androidx.compose.animation.shrinkVertically() + androidx.compose.animation.fadeOut(),
+            enter = expandVertically() + fadeIn(),
+            exit = shrinkVertically() + fadeOut(),
         ) {
             Row(
                 verticalAlignment = androidx.compose.ui.Alignment.CenterVertically,
@@ -292,48 +267,11 @@ fun CodeEditor(
                 EditorAction("▼") { gotoMatch(matches, true) }
             }
         }
-        Box(
-            Modifier
-                .fillMaxWidth()
-                .height(1.dp)
-                .background(IdeColors.PanelBorder)
-        )
 
-        // ── 快捷符号栏 ──
-        Row(
-            verticalAlignment = androidx.compose.ui.Alignment.CenterVertically,
-            modifier = Modifier
-                .fillMaxWidth()
-                .horizontalScroll(rememberScrollState())
-                .background(IdeColors.PanelBg)
-                .height(34.dp)
-                .padding(horizontal = 4.dp),
-            horizontalArrangement = Arrangement.spacedBy(2.dp),
-        ) {
-            SymbolKey("⇥") { insertSymbol("    ") }          // Tab 缩进
-            SymbolKey("⇤") {                                  // 反缩进：删行首空格
-                val s = value.selection.min
-                val lineStart = value.text.lastIndexOf('\n', (s - 1).coerceAtLeast(0)) + 1
-                if (value.text.substring(lineStart, s.coerceAtLeast(lineStart)).startsWith("    ") && s - lineStart >= 4) {
-                    val newText = value.text.removeRange(lineStart, lineStart + 4)
-                    applyValue(TextFieldValue(newText, TextRange((s - 4).coerceAtLeast(0))), fromUser = true)
-                    onContentChange(newText)
-                }
-            }
-            listOf("\"", "'", ":", "=", "(", ")", "[", "]", "{", "}", "_", "-", "+", "*", "/", "<", ">", ",", ".", "!", "$", "#", "@", "%")
-                .forEach { sym -> SymbolKey(sym) { insertSymbol(sym) } }
-        }
+        // ── 代码区（双指缩放，无任何按钮） ──
         Box(
             Modifier
-                .fillMaxWidth()
-                .height(1.dp)
-                .background(IdeColors.PanelBorder)
-        )
-
-        // ── 代码区（双指缩放） ──
-        Box(
-            Modifier
-                .fillMaxSize()
+                .weight(1f)
                 .pointerInput(Unit) {
                     detectTransformGestures { _, _, zoom, _ ->
                         fontScale = (fontScale * zoom).coerceIn(0.5f, 2.5f)
@@ -346,7 +284,6 @@ fun CodeEditor(
                     .verticalScroll(vScroll)
                     .horizontalScroll(hScroll)
             ) {
-                // 行号列
                 Column(
                     Modifier
                         .background(IdeColors.EditorBg)
@@ -354,7 +291,7 @@ fun CodeEditor(
                 ) {
                     repeat(lineCount) { idx ->
                         Box(Modifier.height(lineHeightDp).width(38.dp)) {
-                            androidx.compose.material3.Text(
+                            Text(
                                 "${idx + 1}",
                                 style = TextStyle(
                                     fontFamily = FontFamily.Monospace,
@@ -380,8 +317,13 @@ fun CodeEditor(
                 BasicTextField(
                     value = value,
                     onValueChange = {
-                        applyValue(it, fromUser = true)
-                        onContentChange(value.text)
+                        if (it.text != value.text) {
+                            undoStack.add(value)
+                            if (undoStack.size > 300) undoStack.removeAt(0)
+                            redoStack.clear()
+                        }
+                        value = it
+                        onContentChange(it.text)
                     },
                     textStyle = editorStyle,
                     cursorBrush = SolidColor(IdeColors.Accent),
@@ -390,12 +332,39 @@ fun CodeEditor(
                 )
             }
         }
+
+        // ── 符号条：固定在编辑器底部，紧贴输入法 ──
+        Row(
+            verticalAlignment = androidx.compose.ui.Alignment.CenterVertically,
+            modifier = Modifier
+                .fillMaxWidth()
+                .horizontalScroll(rememberScrollState())
+                .background(IdeColors.PanelBg)
+                .height(36.dp)
+                .padding(horizontal = 4.dp),
+            horizontalArrangement = Arrangement.spacedBy(3.dp),
+        ) {
+            SymbolKey("⇥") { insertSymbol("    ") }
+            SymbolKey("⇤") {
+                val s = value.selection.min
+                val lineStart = value.text.lastIndexOf('\n', (s - 1).coerceAtLeast(0)) + 1
+                if (value.text.substring(lineStart, s.coerceAtLeast(lineStart)).startsWith("    ") && s - lineStart >= 4) {
+                    val newText = value.text.removeRange(lineStart, lineStart + 4)
+                    undoStack.add(value)
+                    redoStack.clear()
+                    value = TextFieldValue(newText, TextRange((s - 4).coerceAtLeast(0)))
+                    onContentChange(newText)
+                }
+            }
+            listOf("\"", "'", ":", "=", "(", ")", "[", "]", "{", "}", "_", "-", "+", "*", "/", "<", ">", ",", ".", "!", "$", "#", "@", "%")
+                .forEach { sym -> SymbolKey(sym) { insertSymbol(sym) } }
+        }
     }
 }
 
 @Composable
 private fun EditorAction(label: String, enabled: Boolean = true, onClick: () -> Unit) {
-    androidx.compose.material3.Text(
+    Text(
         label,
         fontSize = 12.sp,
         color = if (enabled) IdeColors.TextFg else IdeColors.TextDim.copy(alpha = 0.4f),
@@ -409,12 +378,12 @@ private fun EditorAction(label: String, enabled: Boolean = true, onClick: () -> 
 private fun SymbolKey(sym: String, onClick: () -> Unit) {
     Box(
         Modifier
-            .border(1.dp, IdeColors.PanelBorder, androidx.compose.foundation.shape.RoundedCornerShape(6.dp))
-            .background(IdeColors.HoverBg, androidx.compose.foundation.shape.RoundedCornerShape(6.dp))
+            .border(1.dp, IdeColors.PanelBorder, RoundedCornerShape(6.dp))
+            .background(IdeColors.HoverBg, RoundedCornerShape(6.dp))
             .clickable(onClick = onClick)
-            .padding(horizontal = 8.dp, vertical = 4.dp)
+            .padding(horizontal = 9.dp, vertical = 5.dp)
     ) {
-        androidx.compose.material3.Text(
+        Text(
             sym,
             fontSize = 13.sp,
             fontFamily = FontFamily.Monospace,

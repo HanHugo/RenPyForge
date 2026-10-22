@@ -55,7 +55,10 @@ import androidx.compose.material.icons.filled.Folder
 import androidx.compose.material.icons.filled.Home
 import androidx.compose.material.icons.filled.InstallMobile
 import androidx.compose.material.icons.filled.Menu
+import androidx.compose.material.icons.filled.MoreVert
 import androidx.compose.material.icons.filled.PlayArrow
+import androidx.compose.material.icons.filled.RadioButtonUnchecked
+import androidx.compose.material.icons.filled.CheckCircle
 import androidx.compose.material.icons.filled.Save
 import androidx.compose.material.icons.filled.Search
 import androidx.compose.material.icons.filled.Terminal
@@ -130,6 +133,7 @@ fun IdeScreen(
     var showNewFile by remember { mutableStateOf(false) }
     var showManual by remember { mutableStateOf(false) }
     var showSearch by remember { mutableStateOf(false) }
+    var showTools by remember { mutableStateOf(false) }
     var renameTarget by remember { mutableStateOf<String?>(null) }
 
     LaunchedEffect(panelOpen) {
@@ -167,6 +171,8 @@ fun IdeScreen(
                     onManual = { showManual = true },
                     onSearch = { showSearch = true },
                     onPanelToggle = { panelOpen = !panelOpen },
+                    showTools = showTools,
+                    onToggleTools = { showTools = !showTools },
                 )
                 // 构建中的细进度条
                 AnimatedVisibility(
@@ -219,6 +225,7 @@ fun IdeScreen(
                                 content = viewModel.activeContent,
                                 onContentChange = { viewModel.onEditorChange(it) },
                                 onCursorMoved = { l, c -> viewModel.onCursorMoved(l, c) },
+                                showTools = showTools,
                                 jumpLine = viewModel.jumpRequest?.first ?: 0,
                                 onJumpConsumed = { viewModel.consumeJump() },
                                 modifier = Modifier.fillMaxSize(),
@@ -234,6 +241,7 @@ fun IdeScreen(
                         panelTab = 2
                         panelOpen = true
                     },
+                    onTogglePanel = { panelOpen = !panelOpen },
                 )
             }
         }
@@ -271,6 +279,9 @@ fun IdeScreen(
 
 // ═══════════════════════ 紧凑工具行 ═══════════════════════
 
+/**
+ * 顶栏极简：☰ / 当前文件 / ⋮ 菜单（保存·搜索·手册·面板）/ ▶ 构建
+ */
 @Composable
 private fun IdeToolbarRow(
     viewModel: ProjectViewModel,
@@ -280,11 +291,14 @@ private fun IdeToolbarRow(
     onManual: () -> Unit,
     onSearch: () -> Unit,
     onPanelToggle: () -> Unit,
+    showTools: Boolean,
+    onToggleTools: () -> Unit,
 ) {
+    var menuOpen by remember { mutableStateOf(false) }
     Surface(color = IdeColors.PanelBg, shadowElevation = 2.dp) {
         Row(
             verticalAlignment = Alignment.CenterVertically,
-            modifier = Modifier.fillMaxWidth().height(46.dp).padding(horizontal = 2.dp),
+            modifier = Modifier.fillMaxWidth().height(48.dp).padding(start = 2.dp, end = 6.dp),
         ) {
             if (showMenu) {
                 IconButton(onClick = onMenu) {
@@ -293,32 +307,55 @@ private fun IdeToolbarRow(
             }
             Column(Modifier.weight(1f)) {
                 Text(
-                    viewModel.currentProject ?: "",
-                    fontWeight = FontWeight.SemiBold, fontSize = 14.sp,
+                    viewModel.activeTab?.substringAfterLast('/') ?: "无打开文件",
+                    fontWeight = FontWeight.SemiBold, fontSize = 15.sp,
                     maxLines = 1, overflow = TextOverflow.Ellipsis,
                 )
-                Text("${viewModel.gameFiles.size} 个文件", fontSize = 10.sp, color = IdeColors.TextDim)
+                Text(
+                    viewModel.currentProject ?: "",
+                    fontSize = 10.sp, color = IdeColors.TextDim,
+                    maxLines = 1, overflow = TextOverflow.Ellipsis,
+                )
             }
-            AnimatedVisibility(
-                visible = viewModel.dirtyTabs.isNotEmpty(),
-                enter = scaleIn() + fadeIn(),
-                exit = scaleOut() + fadeOut(),
+            IconButton(onClick = { menuOpen = true }) {
+                Icon(Icons.Filled.MoreVert, contentDescription = "更多", modifier = Modifier.size(22.dp))
+            }
+            androidx.compose.material3.DropdownMenu(
+                expanded = menuOpen,
+                onDismissRequest = { menuOpen = false },
+                containerColor = IdeColors.PanelBg,
             ) {
-                IconButton(onClick = onSave) {
-                    Icon(
-                        Icons.Filled.Save, contentDescription = "全部保存",
-                        tint = IdeColors.WarnOrange, modifier = Modifier.size(20.dp),
-                    )
-                }
-            }
-            IconButton(onClick = onManual) {
-                Icon(Icons.AutoMirrored.Filled.MenuBook, contentDescription = "手册", modifier = Modifier.size(20.dp))
-            }
-            IconButton(onClick = onSearch) {
-                Icon(Icons.Filled.Search, contentDescription = "全局搜索", modifier = Modifier.size(20.dp))
-            }
-            IconButton(onClick = onPanelToggle) {
-                Icon(Icons.Filled.Terminal, contentDescription = "面板", modifier = Modifier.size(20.dp))
+                androidx.compose.material3.DropdownMenuItem(
+                    text = { Text("编辑工具（撤销/查找/插入）") },
+                    leadingIcon = {
+                        Icon(
+                            if (showTools) Icons.Filled.CheckCircle else Icons.Filled.RadioButtonUnchecked,
+                            null, tint = if (showTools) IdeColors.Accent else IdeColors.TextDim,
+                            modifier = Modifier.size(18.dp),
+                        )
+                    },
+                    onClick = { menuOpen = false; onToggleTools() },
+                )
+                androidx.compose.material3.DropdownMenuItem(
+                    text = { Text("全部保存" + if (viewModel.dirtyTabs.isNotEmpty()) "（${viewModel.dirtyTabs.size} 个未保存）" else "") },
+                    leadingIcon = { Icon(Icons.Filled.Save, null, tint = IdeColors.WarnOrange, modifier = Modifier.size(18.dp)) },
+                    onClick = { menuOpen = false; onSave() },
+                )
+                androidx.compose.material3.DropdownMenuItem(
+                    text = { Text("全局搜索") },
+                    leadingIcon = { Icon(Icons.Filled.Search, null, modifier = Modifier.size(18.dp)) },
+                    onClick = { menuOpen = false; onSearch() },
+                )
+                androidx.compose.material3.DropdownMenuItem(
+                    text = { Text("代码手册") },
+                    leadingIcon = { Icon(Icons.AutoMirrored.Filled.MenuBook, null, modifier = Modifier.size(18.dp)) },
+                    onClick = { menuOpen = false; onManual() },
+                )
+                androidx.compose.material3.DropdownMenuItem(
+                    text = { Text("终端 / 构建面板") },
+                    leadingIcon = { Icon(Icons.Filled.Terminal, null, modifier = Modifier.size(18.dp)) },
+                    onClick = { menuOpen = false; onPanelToggle() },
+                )
             }
             Button(
                 onClick = {
@@ -331,7 +368,7 @@ private fun IdeToolbarRow(
                     contentColor = Color.White,
                 ),
                 contentPadding = PaddingValues(horizontal = 14.dp, vertical = 6.dp),
-                modifier = Modifier.padding(end = 6.dp).height(32.dp),
+                modifier = Modifier.height(32.dp),
             ) {
                 Icon(
                     if (viewModel.building) Icons.Filled.Build else Icons.Filled.PlayArrow,
@@ -1056,15 +1093,25 @@ private fun StatusBar(
     viewModel: ProjectViewModel,
     panelOpen: Boolean,
     onOpenProblems: () -> Unit,
+    onTogglePanel: () -> Unit,
 ) {
     Surface(color = IdeColors.PanelBg) {
         Row(
             verticalAlignment = Alignment.CenterVertically,
             modifier = Modifier
                 .fillMaxWidth()
-                .height(24.dp)
-                .padding(horizontal = 10.dp),
+                .height(28.dp)
+                .padding(start = 0.dp, end = 10.dp),
         ) {
+            // 终端/构建面板开关
+            IconButton(onClick = onTogglePanel, modifier = Modifier.size(30.dp)) {
+                Icon(
+                    Icons.Filled.Terminal,
+                    contentDescription = "终端面板",
+                    tint = if (panelOpen) IdeColors.Accent else IdeColors.TextDim,
+                    modifier = Modifier.size(16.dp),
+                )
+            }
             Text(
                 viewModel.activeTab ?: "无打开文件",
                 fontSize = 10.sp, color = IdeColors.TextDim, fontFamily = FontFamily.Monospace,
