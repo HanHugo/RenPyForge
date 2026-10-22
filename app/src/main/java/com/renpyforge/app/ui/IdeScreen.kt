@@ -39,6 +39,7 @@ import androidx.compose.material.icons.filled.Save
 import androidx.compose.material.icons.filled.Terminal
 import androidx.compose.material.icons.filled.Build
 import androidx.compose.material.icons.filled.Clear
+import androidx.compose.material.icons.automirrored.filled.MenuBook
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Button
 import androidx.compose.material3.ButtonDefaults
@@ -48,12 +49,15 @@ import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.LinearProgressIndicator
 import androidx.compose.material3.MaterialTheme
-import androidx.compose.material3.ModalDrawerSheet
-import androidx.compose.material3.ModalNavigationDrawer
+import androidx.compose.material3.ModalBottomSheet
 import androidx.compose.material3.OutlinedTextField
+import androidx.compose.material3.SegmentedButton
+import androidx.compose.material3.SegmentedButtonDefaults
+import androidx.compose.material3.SingleChoiceSegmentedButtonRow
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
+import androidx.compose.material3.rememberModalBottomSheetState
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
@@ -88,6 +92,7 @@ fun IdeScreen(
     var panelOpen by remember { mutableStateOf(false) }
     var panelTab by remember { mutableIntStateOf(0) }   // 0 终端 1 构建
     var showNewFile by remember { mutableStateOf(false) }
+    var showManual by remember { mutableStateOf(false) }
 
     Column(
         Modifier
@@ -101,6 +106,7 @@ fun IdeScreen(
             onPanelToggle = { panelOpen = !panelOpen },
             panelOpen = panelOpen,
             onSave = { viewModel.saveAllTabs() },
+            onManual = { showManual = true },
         )
 
         // 主体：左文件树(手机上以抽屉面板实现) + 编辑器
@@ -131,6 +137,9 @@ fun IdeScreen(
     if (showNewFile) {
         NewFileDialog(viewModel) { showNewFile = false }
     }
+    if (showManual) {
+        ManualSheet { showManual = false }
+    }
 }
 
 // ───────────────── 顶栏 ─────────────────
@@ -143,6 +152,7 @@ private fun IdeTopBar(
     onPanelToggle: () -> Unit,
     panelOpen: Boolean,
     onSave: () -> Unit,
+    onManual: () -> Unit,
 ) {
     Surface(color = IdeColors.PanelBg, shadowElevation = 2.dp) {
         Column(Modifier.fillMaxWidth()) {
@@ -177,6 +187,12 @@ private fun IdeTopBar(
                         tint = IdeColors.WarnOrange, modifier = Modifier.size(20.dp),
                     )
                 }
+            }
+            IconButton(onClick = onManual) {
+                Icon(
+                    Icons.AutoMirrored.Filled.MenuBook, contentDescription = "代码手册",
+                    tint = IdeColors.TextFg, modifier = Modifier.size(20.dp),
+                )
             }
             IconButton(onClick = onPanelToggle) {
                 Icon(
@@ -263,71 +279,123 @@ private fun FileTreePanel(
 
 @Composable
 private fun FileTreeList(viewModel: ProjectViewModel) {
-    // 预计算条目（含文件夹头），避免 LazyColumn 惰性组合导致的状态错乱
-    val entries = remember(viewModel.gameFiles) {
-        buildList {
-            var lastDir: String? = null
-            for (f in viewModel.gameFiles) {
-                val dir = f.substringBeforeLast('/', "")
-                if (dir != lastDir) {
-                    lastDir = dir
-                    if (dir.isNotEmpty()) add(dir to null)
+    // 真树形结构：文件夹可展开/收起；key 全局唯一（d:/f: 前缀）避免重复 key 崩溃
+    val tree = remember(viewModel.gameFiles) { buildFileTree(viewModel.gameFiles) }
+    var expanded by remember(viewModel.gameFiles) {
+        mutableStateOf(tree.dirs.values.map { it.path }.toSet())  // 顶层目录默认展开
+    }
+
+    val flat = remember(tree, expanded) { flattenTree(tree, expanded) }
+
+    LazyColumn(Modifier.fillMaxSize(), contentPadding = PaddingValues(vertical = 6.dp)) {
+        items(flat.size, key = { flat[it].key }) { idx ->
+            val node = flat[idx]
+            when (node) {
+                is TreeDir -> DirRow(node, node.path in expanded) {
+                    expanded = if (node.path in expanded) expanded - node.path else expanded + node.path
                 }
-                add(dir to f)
+                is TreeFile -> FileRow(node, viewModel)
             }
         }
     }
-    LazyColumn(Modifier.fillMaxSize(), contentPadding = PaddingValues(vertical = 6.dp)) {
-        items(entries, key = { it.second ?: "hdr:${it.first}" }) { (dir, file) ->
-            if (file == null) {
-                Row(
-                    verticalAlignment = Alignment.CenterVertically,
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .padding(start = 8.dp, top = 6.dp, bottom = 2.dp),
-                ) {
-                    Icon(Icons.Filled.Folder, null, tint = IdeColors.WarnOrange, modifier = Modifier.size(14.dp))
-                    Spacer(Modifier.width(6.dp))
-                    Text(dir, fontSize = 12.sp, color = IdeColors.TextDim, fontFamily = FontFamily.Monospace)
-                }
-            } else {
-                val depth = dir.count { it == '/' } + if (dir.isNotEmpty()) 1 else 0
-                val active = file == viewModel.activeTab
-                Row(
-                    verticalAlignment = Alignment.CenterVertically,
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .background(if (active) IdeColors.SelectedBg else Color.Transparent)
-                        .clickable { viewModel.openGameFile(file) }
-                        .padding(start = (20 + depth * 14).dp, end = 8.dp, top = 5.dp, bottom = 5.dp),
-                ) {
-                    Box(
-                        Modifier
-                            .size(6.dp)
-                            .background(
-                                if (viewModel.dirtyTabs.contains(file)) IdeColors.WarnOrange else IdeColors.Accent.copy(alpha = 0.5f),
-                                CircleShape,
-                            )
-                    )
-                    Spacer(Modifier.width(8.dp))
-                    Text(
-                        file.substringAfterLast('/'),
-                        fontSize = 13.sp,
-                        fontFamily = FontFamily.Monospace,
-                        color = if (active) IdeColors.TextFg else IdeColors.ConsoleFg,
-                    )
-                    Spacer(Modifier.weight(1f))
-                    if (active) {
-                        Icon(
-                            Icons.Filled.Delete, contentDescription = "删除",
-                            tint = IdeColors.FailRed.copy(alpha = 0.6f),
-                            modifier = Modifier
-                                .size(14.dp)
-                                .clickable { viewModel.deleteGameFile(file) },
-                        )
-                    }
-                }
-            }
+}
+
+private sealed class TreeNode2 { abstract val key: String }
+private data class TreeDir(val path: String, val name: String, val depth: Int) : TreeNode2() { override val key = "d:$path" }
+private data class TreeFile(val path: String, val name: String, val depth: Int) : TreeNode2() { override val key = "f:$path" }
+
+private class FsNode(val name: String, val path: String) {
+    val dirs = linkedMapOf<String, FsNode>()
+    val files = mutableListOf<String>()
+}
+
+private fun buildFileTree(files: List<String>): FsNode {
+    val root = FsNode("", "")
+    for (f in files) {
+        val parts = f.split('/')
+        var cur = root
+        for (i in 0 until parts.size - 1) {
+            val p = parts.subList(0, i + 1).joinToString("/")
+            cur = cur.dirs.getOrPut(parts[i]) { FsNode(parts[i], p) }
+        }
+        cur.files.add(f)
+    }
+    return root
+}
+
+private fun flattenTree(root: FsNode, expanded: Set<String>): List<TreeNode2> {
+    val out = mutableListOf<TreeNode2>()
+    fun walk(node: FsNode, depth: Int) {
+        for ((_, dir) in node.dirs) {
+            out.add(TreeDir(dir.path, dir.name, depth))
+            if (dir.path in expanded) walk(dir, depth + 1)
+        }
+        for (f in node.files) out.add(TreeFile(f, f.substringAfterLast('/'), depth))
+    }
+    walk(root, 0)
+    return out
+}
+
+@Composable
+private fun DirRow(node: TreeDir, isOpen: Boolean, onToggle: () -> Unit) {
+    Row(
+        verticalAlignment = Alignment.CenterVertically,
+        modifier = Modifier
+            .fillMaxWidth()
+            .clickable(onClick = onToggle)
+            .padding(start = (10 + node.depth * 16).dp, end = 8.dp, top = 6.dp, bottom = 6.dp),
+    ) {
+        Text(
+            if (isOpen) "▾" else "▸",
+            fontSize = 11.sp,
+            color = IdeColors.TextDim,
+            modifier = Modifier.width(14.dp),
+        )
+        Icon(Icons.Filled.Folder, null, tint = IdeColors.WarnOrange, modifier = Modifier.size(15.dp))
+        Spacer(Modifier.width(6.dp))
+        Text(
+            node.name, fontSize = 13.sp,
+            color = IdeColors.TextFg, fontFamily = FontFamily.Monospace,
+        )
+    }
+}
+
+@Composable
+private fun FileRow(node: TreeFile, viewModel: ProjectViewModel) {
+    val active = node.path == viewModel.activeTab
+    Row(
+        verticalAlignment = Alignment.CenterVertically,
+        modifier = Modifier
+            .fillMaxWidth()
+            .background(if (active) IdeColors.SelectedBg else Color.Transparent)
+            .clickable { viewModel.openGameFile(node.path) }
+            .padding(start = (40 + node.depth * 16).dp, end = 8.dp, top = 5.dp, bottom = 5.dp),
+    ) {
+        Box(
+            Modifier
+                .size(6.dp)
+                .background(
+                    if (viewModel.dirtyTabs.contains(node.path)) IdeColors.WarnOrange else IdeColors.Accent.copy(alpha = 0.5f),
+                    CircleShape,
+                )
+        )
+        Spacer(Modifier.width(8.dp))
+        Text(
+            node.name,
+            fontSize = 13.sp,
+            fontFamily = FontFamily.Monospace,
+            color = if (active) IdeColors.TextFg else IdeColors.ConsoleFg,
+            maxLines = 1, overflow = TextOverflow.Ellipsis,
+        )
+        Spacer(Modifier.weight(1f))
+        if (active) {
+            Icon(
+                Icons.Filled.Delete, contentDescription = "删除",
+                tint = IdeColors.FailRed.copy(alpha = 0.6f),
+                modifier = Modifier
+                    .size(14.dp)
+                    .clickable { viewModel.deleteGameFile(node.path) },
+            )
         }
     }
 }
@@ -422,13 +490,27 @@ private fun BottomPanel(
             .background(IdeColors.PanelBg)
             .border(1.dp, IdeColors.PanelBorder)
     ) {
-        // 面板标签行
+        // 面板标签行（MD3 SegmentedButton）
         Row(
             verticalAlignment = Alignment.CenterVertically,
-            modifier = Modifier.height(34.dp),
+            modifier = Modifier.height(36.dp).padding(start = 8.dp),
         ) {
-            PanelTab("终端", tab == 0) { onTab(0) }
-            PanelTab("构建", tab == 1) { onTab(1) }
+            SingleChoiceSegmentedButtonRow(
+                modifier = Modifier.width(200.dp).height(30.dp),
+            ) {
+                SegmentedButton(
+                    selected = tab == 0,
+                    onClick = { onTab(0) },
+                    shape = SegmentedButtonDefaults.itemShape(0, 2),
+                    label = { Text("终端", fontSize = 12.sp) },
+                )
+                SegmentedButton(
+                    selected = tab == 1,
+                    onClick = { onTab(1) },
+                    shape = SegmentedButtonDefaults.itemShape(1, 2),
+                    label = { Text("构建", fontSize = 12.sp) },
+                )
+            }
             Spacer(Modifier.weight(1f))
             IconButton(onClick = onClose, modifier = Modifier.size(28.dp)) {
                 Icon(Icons.Filled.Clear, contentDescription = "收起面板", tint = IdeColors.TextDim, modifier = Modifier.size(15.dp))
@@ -446,19 +528,6 @@ private fun BottomPanel(
             1 -> BuildConsole(viewModel, onInstall)
         }
     }
-}
-
-@Composable
-private fun PanelTab(label: String, active: Boolean, onClick: () -> Unit) {
-    Text(
-        label,
-        fontSize = 12.sp,
-        fontWeight = if (active) FontWeight.SemiBold else FontWeight.Normal,
-        color = if (active) IdeColors.TextFg else IdeColors.TextDim,
-        modifier = Modifier
-            .clickable(onClick = onClick)
-            .padding(horizontal = 16.dp, vertical = 8.dp),
-    )
 }
 
 @Composable
@@ -702,4 +771,127 @@ private fun NewFileDialog(viewModel: ProjectViewModel, onDismiss: () -> Unit) {
         },
         dismissButton = { TextButton(onClick = onDismiss) { Text("取消") } },
     )
+}
+
+// ───────────────── 代码手册（MD3 ModalBottomSheet） ─────────────────
+
+private data class ManualSection(val title: String, val code: String, val desc: String)
+
+private val manualSections = listOf(
+    ManualSection(
+        "剧本基础", """label start:
+    scene bg room
+    show eileen happy
+    "你好，世界！"
+    return""",
+        "label 是流程入口；scene 换背景；show 显示立绘；直接写字符串就是对话，前面加角色名变量表示谁在说话。",
+    ),
+    ManualSection(
+        "选择分支", """menu:
+    "去图书馆":
+        jump library
+    "回家睡觉":
+        jump home""",
+        "menu: 创建选项；每个选项是一段缩进的 \"文本\": 加后续动作。",
+    ),
+    ManualSection(
+        "跳转与标签", """label library:
+    "这里很安静。"
+    jump start""",
+        "jump 跳到另一个 label；call 会记住返回位置，配合 return 回来。",
+    ),
+    ManualSection(
+        "变量", """default points = 0
+define e = Character("艾琳")
+
+label start:
+    $ points += 1
+    if points >= 3:
+        e "好感度很高嘛。"
+""",
+        "default 定义存档变量；define 定义常量（如角色）；$ 行执行任意 Python；if/elif/else 条件分支。",
+    ),
+    ManualSection(
+        "图像与音频", """image bg room = "images/room.jpg"
+play music "audio/bgm.ogg"
+play sound "audio/click.wav"
+stop music fadeout 1.0""",
+        "image 注册图像；play/stop 控制音乐音效，支持 fadeout。",
+    ),
+    ManualSection(
+        "界面 screen", """screen stats():
+    frame:
+        vbox:
+            text "好感度: [points]"
+            textbutton "关闭" action Return()
+
+label start:
+    show screen stats""",
+        "screen 定义 UI；[变量] 插值显示；textbutton + action 响应点击；show screen 显示，hide screen 隐藏。",
+    ),
+    ManualSection(
+        "转场与停留", """with dissolve
+pause 2.0
+window hide""",
+        "with 指定转场效果（dissolve/fade 等）；pause 暂停秒数。",
+    ),
+    ManualSection(
+        "实用技巧", """# 这是注释
+"[player_name] 早上好"      # 文本插值
+nvl clear                   # NVL 模式清屏
+transform shake:
+    linear 0.2 xoffset 10""",
+        "# 注释；transform 定义动画；官方文档 renpy.org/doc 见「更多」。",
+    ),
+)
+
+@Composable
+private fun ManualSheet(onDismiss: () -> Unit) {
+    ModalBottomSheet(
+        onDismissRequest = onDismiss,
+        sheetState = rememberModalBottomSheetState(skipPartiallyExpanded = true),
+        containerColor = IdeColors.PanelBg,
+        contentColor = IdeColors.TextFg,
+    ) {
+        Column(Modifier.padding(horizontal = 16.dp)) {
+            Text("Ren'Py 代码手册", fontSize = 18.sp, fontWeight = FontWeight.Bold)
+            Text(
+                "最常用语句速查 · 完整文档见 renpy.org/doc",
+                fontSize = 11.sp, color = IdeColors.TextDim,
+                modifier = Modifier.padding(top = 2.dp, bottom = 10.dp),
+            )
+        }
+        LazyColumn(
+            Modifier.fillMaxWidth().padding(horizontal = 16.dp),
+            contentPadding = PaddingValues(bottom = 32.dp),
+            verticalArrangement = Arrangement.spacedBy(12.dp),
+        ) {
+            items(manualSections.size, key = { manualSections[it].title }) { idx ->
+                val s = manualSections[idx]
+                Column(
+                    Modifier
+                        .fillMaxWidth()
+                        .background(IdeColors.EditorBg, RoundedCornerShape(10.dp))
+                        .border(1.dp, IdeColors.PanelBorder, RoundedCornerShape(10.dp))
+                        .padding(12.dp)
+                ) {
+                    Text(s.title, fontSize = 14.sp, fontWeight = FontWeight.SemiBold, color = IdeColors.Accent)
+                    Spacer(Modifier.height(6.dp))
+                    Text(
+                        s.code,
+                        fontSize = 11.sp,
+                        fontFamily = FontFamily.Monospace,
+                        lineHeight = 16.sp,
+                        color = IdeColors.ConsoleFg,
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .background(IdeColors.ConsoleBg, RoundedCornerShape(6.dp))
+                            .padding(8.dp),
+                    )
+                    Spacer(Modifier.height(6.dp))
+                    Text(s.desc, fontSize = 12.sp, color = IdeColors.TextDim)
+                }
+            }
+        }
+    }
 }

@@ -1,12 +1,16 @@
 package com.renpyforge.app.ui
 
 import androidx.compose.foundation.background
+import androidx.compose.foundation.border
+import androidx.compose.foundation.clickable
+import androidx.compose.foundation.gestures.detectTransformGestures
 import androidx.compose.foundation.horizontalScroll
+import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
-import androidx.compose.foundation.layout.fillMaxHeight
 import androidx.compose.foundation.layout.fillMaxSize
+import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.width
@@ -16,25 +20,31 @@ import androidx.compose.foundation.verticalScroll
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableFloatStateOf
+import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.SolidColor
+import androidx.compose.ui.input.pointer.pointerInput
+import androidx.compose.ui.platform.LocalClipboardManager
 import androidx.compose.ui.platform.LocalDensity
+import androidx.compose.ui.text.AnnotatedString
+import androidx.compose.ui.text.TextRange
 import androidx.compose.ui.text.TextStyle
 import androidx.compose.ui.text.font.FontFamily
+import androidx.compose.ui.text.input.TextFieldValue
 import androidx.compose.ui.text.input.VisualTransformation
 import androidx.compose.ui.text.style.LineHeightStyle
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
-import com.renpyforge.app.ui.IdeColors.PanelBorder
-import com.renpyforge.app.ui.IdeColors.Syntax
 import com.renpyforge.app.ui.IdeColors.TextDim
 
 private const val LINE_HEIGHT_SP = 20
+private const val BASE_FONT_SP = 13
 
-/** 代码编辑器：行号列 + .rpy 语法高亮 + 光标行列回报 */
+/** 代码编辑器：行号 + 语法高亮 + 剪贴板工具条 + 快捷符号栏 + 双指缩放 */
 @Composable
 fun CodeEditor(
     path: String,
@@ -43,31 +53,30 @@ fun CodeEditor(
     onCursorMoved: (line: Int, col: Int) -> Unit,
     modifier: Modifier = Modifier,
 ) {
-    var value by remember(path) {
-        mutableStateOf(androidx.compose.ui.text.input.TextFieldValue(content))
-    }
-    var curLine by remember(path) { mutableStateOf(1) }
+    var value by remember(path) { mutableStateOf(TextFieldValue(content)) }
+    var curLine by remember(path) { mutableIntStateOf(1) }
+    var fontScale by remember { mutableFloatStateOf(1f) }
+    val clipboard = LocalClipboardManager.current
+
     LaunchedEffect(content) {
-        if (value.text != content) {
-            value = androidx.compose.ui.text.input.TextFieldValue(content)
-        }
+        if (value.text != content) value = TextFieldValue(content)
     }
-    // 光标位置回报
     LaunchedEffect(value.selection.start, value.text) {
-        val pos = value.selection.start.coerceIn(0, value.text.length)
-        val before = value.text.substring(0, pos)
-        val line = before.count { it == '\n' } + 1
-        val col = pos - (before.lastIndexOf('\n') + 1) + 1
-        curLine = line
-        onCursorMoved(line, col)
+        val (l, c) = lineColOf(value.text, value.selection.start)
+        curLine = l
+        onCursorMoved(l, c)
     }
 
-    val lineHeight = with(LocalDensity.current) { LINE_HEIGHT_SP.sp.toDp() }
+    val fontSp = (BASE_FONT_SP * fontScale).coerceIn(8f, 32f)
+    val lineSp = (LINE_HEIGHT_SP * fontScale).coerceIn(13f, 46f)
+    val density = LocalDensity.current
+    val lineHeightDp = with(density) { lineSp.sp.toDp() }
     val lineCount = value.text.count { it == '\n' } + 1
+
     val editorStyle = TextStyle(
         fontFamily = FontFamily.Monospace,
-        fontSize = 13.sp,
-        lineHeight = LINE_HEIGHT_SP.sp,
+        fontSize = fontSp.sp,
+        lineHeight = lineSp.sp,
         color = IdeColors.TextFg,
         lineHeightStyle = LineHeightStyle(
             alignment = LineHeightStyle.Alignment.Center,
@@ -75,59 +84,192 @@ fun CodeEditor(
         ),
     )
 
-    val scroll = rememberScrollState()
+    // —— 编辑操作 ——
+    fun commitSelection(range: TextRange) { value = value.copy(selection = range) }
+
+    fun selText(): String =
+        if (value.selection.collapsed) "" else value.text.substring(value.selection.min, value.selection.max)
+
+    fun replaceSelection(insert: String, cursorOffsetInInsert: Int = insert.length) {
+        val s = value.selection.min
+        val e = value.selection.max
+        val newText = value.text.substring(0, s) + insert + value.text.substring(e)
+        val pos = (s + cursorOffsetInInsert).coerceAtMost(newText.length)
+        value = TextFieldValue(newText, TextRange(pos))
+        onContentChange(newText)
+    }
+
+    fun insertSymbol(sym: String) {
+        // 自动补对：光标落在括号/引号对中间
+        val pair = mapOf("(" to ")", "[" to "]", "{" to "}", "\"" to "\"", "'" to "'")
+        val close = pair[sym]
+        if (close != null && value.selection.collapsed) {
+            replaceSelection(sym + close, 1)
+        } else {
+            replaceSelection(sym)
+        }
+    }
+
+    val vScroll = rememberScrollState()
     val hScroll = rememberScrollState()
 
-    Row(
-        modifier
-            .background(IdeColors.EditorBg)
-            .verticalScroll(scroll)
-            .horizontalScroll(hScroll)
-    ) {
-        // 行号列
-        Column(
-            Modifier
-                .background(IdeColors.EditorBg)
-                .padding(start = 6.dp, end = 8.dp)
+    Column(modifier.background(IdeColors.EditorBg)) {
+        // ── 工具条：剪贴板操作 + 缩放 ──
+        Row(
+            verticalAlignment = androidx.compose.ui.Alignment.CenterVertically,
+            modifier = Modifier
+                .fillMaxWidth()
+                .background(IdeColors.PanelBg)
+                .height(32.dp),
         ) {
-            repeat(lineCount) { idx ->
-                Box(
-                    Modifier
-                        .height(lineHeight)
-                        .width(38.dp)
-                ) {
-                    androidx.compose.material3.Text(
-                        "${idx + 1}",
-                        style = TextStyle(
-                            fontFamily = FontFamily.Monospace,
-                            fontSize = 11.sp,
-                            lineHeight = LINE_HEIGHT_SP.sp,
-                            color = TextDim.copy(alpha = if (idx + 1 == curLine) 0.95f else 0.55f),
-                        ),
-                    )
+            EditorAction("全选") { commitSelection(TextRange(0, value.text.length)) }
+            EditorAction("复制") {
+                val t = selText()
+                if (t.isNotEmpty()) clipboard.setText(AnnotatedString(t))
+            }
+            EditorAction("剪切") {
+                val t = selText()
+                if (t.isNotEmpty()) {
+                    clipboard.setText(AnnotatedString(t))
+                    replaceSelection("")
                 }
             }
+            EditorAction("粘贴") {
+                clipboard.getText()?.text?.let { replaceSelection(it) }
+            }
+            Box(
+                Modifier
+                    .padding(horizontal = 6.dp)
+                    .height(16.dp)
+                    .width(1.dp)
+                    .background(IdeColors.PanelBorder)
+            )
+            EditorAction("A−") { fontScale = (fontScale - 0.15f).coerceAtLeast(0.5f) }
+            EditorAction("A+") { fontScale = (fontScale + 0.15f).coerceAtMost(2.5f) }
         }
-        // 竖直分隔线由外层绘制
+        Box(
+            Modifier
+                .fillMaxWidth()
+                .height(1.dp)
+                .background(IdeColors.PanelBorder)
+        )
 
-        val transform = if (RpySyntax.isRpy(path)) {
-            VisualTransformation { text ->
-                androidx.compose.ui.text.input.TransformedText(
-                    RpySyntax.highlight(text.text),
-                    androidx.compose.ui.text.input.OffsetMapping.Identity,
+        // ── 快捷符号栏 ──
+        Row(
+            verticalAlignment = androidx.compose.ui.Alignment.CenterVertically,
+            modifier = Modifier
+                .fillMaxWidth()
+                .horizontalScroll(rememberScrollState())
+                .background(IdeColors.PanelBg)
+                .height(34.dp)
+                .padding(horizontal = 4.dp),
+            horizontalArrangement = Arrangement.spacedBy(2.dp),
+        ) {
+            SymbolKey("⇥") { insertSymbol("    ") }          // Tab 缩进
+            SymbolKey("⇤") {                                  // 反缩进：删行首空格
+                val s = value.selection.min
+                val lineStart = value.text.lastIndexOf('\n', (s - 1).coerceAtLeast(0)) + 1
+                if (value.text.substring(lineStart, s.coerceAtLeast(lineStart)).startsWith("    ") && s - lineStart >= 4) {
+                    val newText = value.text.removeRange(lineStart, lineStart + 4)
+                    value = TextFieldValue(newText, TextRange((s - 4).coerceAtLeast(0)))
+                    onContentChange(newText)
+                }
+            }
+            listOf("\"", "'", ":", "=", "(", ")", "[", "]", "{", "}", "_", "-", "+", "*", "/", "<", ">", ",", ".", "!", "$", "#", "@", "%")
+                .forEach { sym -> SymbolKey(sym) { insertSymbol(sym) } }
+        }
+        Box(
+            Modifier
+                .fillMaxWidth()
+                .height(1.dp)
+                .background(IdeColors.PanelBorder)
+        )
+
+        // ── 代码区（双指缩放） ──
+        Box(
+            Modifier
+                .fillMaxSize()
+                .pointerInput(Unit) {
+                    detectTransformGestures { _, _, zoom, _ ->
+                        fontScale = (fontScale * zoom).coerceIn(0.5f, 2.5f)
+                    }
+                }
+        ) {
+            Row(
+                Modifier
+                    .fillMaxSize()
+                    .verticalScroll(vScroll)
+                    .horizontalScroll(hScroll)
+            ) {
+                // 行号列
+                Column(
+                    Modifier
+                        .background(IdeColors.EditorBg)
+                        .padding(start = 6.dp, end = 8.dp)
+                ) {
+                    repeat(lineCount) { idx ->
+                        Box(Modifier.height(lineHeightDp).width(38.dp)) {
+                            androidx.compose.material3.Text(
+                                "${idx + 1}",
+                                style = TextStyle(
+                                    fontFamily = FontFamily.Monospace,
+                                    fontSize = 11.sp * fontScale,
+                                    lineHeight = lineSp.sp,
+                                    color = TextDim.copy(alpha = if (idx + 1 == curLine) 0.95f else 0.55f),
+                                ),
+                            )
+                        }
+                    }
+                }
+                val transform = if (RpySyntax.isRpy(path)) {
+                    VisualTransformation { text ->
+                        androidx.compose.ui.text.input.TransformedText(
+                            RpySyntax.highlight(text.text),
+                            androidx.compose.ui.text.input.OffsetMapping.Identity,
+                        )
+                    }
+                } else {
+                    VisualTransformation.None
+                }
+                BasicTextField(
+                    value = value,
+                    onValueChange = { value = it; onContentChange(it.text) },
+                    textStyle = editorStyle,
+                    cursorBrush = SolidColor(IdeColors.Accent),
+                    visualTransformation = transform,
+                    modifier = Modifier.padding(end = 40.dp)
                 )
             }
-        } else {
-            VisualTransformation.None
         }
+    }
+}
 
-        BasicTextField(
-            value = value,
-            onValueChange = { value = it; onContentChange(it.text) },
-            textStyle = editorStyle,
-            cursorBrush = SolidColor(IdeColors.Accent),
-            visualTransformation = transform,
-            modifier = Modifier.padding(end = 40.dp)
+@Composable
+private fun EditorAction(label: String, onClick: () -> Unit) {
+    androidx.compose.material3.Text(
+        label,
+        fontSize = 12.sp,
+        color = IdeColors.TextFg,
+        modifier = Modifier
+            .clickable(onClick = onClick)
+            .padding(horizontal = 10.dp, vertical = 6.dp),
+    )
+}
+
+@Composable
+private fun SymbolKey(sym: String, onClick: () -> Unit) {
+    Box(
+        Modifier
+            .border(1.dp, IdeColors.PanelBorder, androidx.compose.foundation.shape.RoundedCornerShape(6.dp))
+            .background(IdeColors.HoverBg, androidx.compose.foundation.shape.RoundedCornerShape(6.dp))
+            .clickable(onClick = onClick)
+            .padding(horizontal = 8.dp, vertical = 4.dp)
+    ) {
+        androidx.compose.material3.Text(
+            sym,
+            fontSize = 13.sp,
+            fontFamily = FontFamily.Monospace,
+            color = IdeColors.TextFg,
         )
     }
 }
