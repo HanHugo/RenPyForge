@@ -152,6 +152,17 @@ class ProjectViewModel(private val context: Context) {
         }
     }
 
+    // —— 脚本大纲 ——
+    data class OutlineItem(val kind: String, val name: String, val line: Int)
+
+    fun outline(): List<OutlineItem> {
+        val regex = Regex("""^\s*(label|screen|define|default|transform|style|image)\s+([\w.]+)""")
+        return activeContent.lineSequence().mapIndexed { idx, line ->
+            val m = regex.find(line)
+            if (m != null) OutlineItem(m.groupValues[1], m.groupValues[2], idx + 1) else null
+        }.filterNotNull().toList()
+    }
+
     // —— 终端 ——
     val terminalLines = mutableStateListOf<String>()
     var terminalRunning by mutableStateOf(false)

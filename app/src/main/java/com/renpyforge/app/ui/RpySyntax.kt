@@ -102,4 +102,7 @@ object RpySyntax {
 
     fun isRpy(path: String): Boolean =
         path.endsWith(".rpy") || path.endsWith(".rpym")
+
+    /** 补全候选：全部关键字 + 指令 */
+    fun allWords(): List<String> = (keywords + directives).sorted()
 }

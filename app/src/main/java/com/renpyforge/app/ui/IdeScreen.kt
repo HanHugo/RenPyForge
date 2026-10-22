@@ -54,6 +54,7 @@ import androidx.compose.material.icons.filled.Delete
 import androidx.compose.material.icons.filled.Folder
 import androidx.compose.material.icons.filled.Home
 import androidx.compose.material.icons.filled.InstallMobile
+import androidx.compose.material.icons.filled.List
 import androidx.compose.material.icons.filled.Menu
 import androidx.compose.material.icons.filled.MoreVert
 import androidx.compose.material.icons.filled.PlayArrow
@@ -134,6 +135,7 @@ fun IdeScreen(
     var showManual by remember { mutableStateOf(false) }
     var showSearch by remember { mutableStateOf(false) }
     var showTools by remember { mutableStateOf(false) }
+    var showOutline by remember { mutableStateOf(false) }
     var renameTarget by remember { mutableStateOf<String?>(null) }
 
     LaunchedEffect(panelOpen) {
@@ -173,6 +175,7 @@ fun IdeScreen(
                     onPanelToggle = { panelOpen = !panelOpen },
                     showTools = showTools,
                     onToggleTools = { showTools = !showTools },
+                    onOutline = { showOutline = true },
                 )
                 // 构建中的细进度条
                 AnimatedVisibility(
@@ -269,6 +272,7 @@ fun IdeScreen(
     if (showNewFile) NewFileDialog(viewModel) { showNewFile = false }
     if (showManual) ManualSheet { showManual = false }
     if (showSearch) GlobalSearchSheet(viewModel) { showSearch = false }
+    if (showOutline) OutlineSheet(viewModel) { showOutline = false }
     renameTarget?.let { target ->
         RenameDialog(target) { newName ->
             if (newName != null) viewModel.renameGameFile(target, newName)
@@ -293,6 +297,7 @@ private fun IdeToolbarRow(
     onPanelToggle: () -> Unit,
     showTools: Boolean,
     onToggleTools: () -> Unit,
+    onOutline: () -> Unit,
 ) {
     var menuOpen by remember { mutableStateOf(false) }
     Surface(color = IdeColors.PanelBg, shadowElevation = 2.dp) {
@@ -325,6 +330,11 @@ private fun IdeToolbarRow(
                 onDismissRequest = { menuOpen = false },
                 containerColor = IdeColors.PanelBg,
             ) {
+                androidx.compose.material3.DropdownMenuItem(
+                    text = { Text("脚本大纲") },
+                    leadingIcon = { Icon(Icons.Filled.List, null, modifier = Modifier.size(18.dp)) },
+                    onClick = { menuOpen = false; onOutline() },
+                )
                 androidx.compose.material3.DropdownMenuItem(
                     text = { Text("编辑工具（撤销/查找/插入）") },
                     leadingIcon = {
@@ -1563,6 +1573,76 @@ private fun GlobalSearchSheet(
                     )
                 }
                 HorizontalDivider(color = IdeColors.PanelBorder.copy(alpha = 0.5f))
+            }
+        }
+    }
+}
+
+// ═══════════════════════ 脚本大纲 ═══════════════════════
+
+@Composable
+private fun OutlineSheet(
+    viewModel: ProjectViewModel,
+    onDismiss: () -> Unit,
+) {
+    ModalBottomSheet(
+        onDismissRequest = onDismiss,
+        sheetState = rememberModalBottomSheetState(skipPartiallyExpanded = true),
+        containerColor = IdeColors.PanelBg,
+        contentColor = IdeColors.TextFg,
+    ) {
+        Column(Modifier.padding(horizontal = 16.dp)) {
+            Text("脚本大纲", fontSize = 18.sp, fontWeight = FontWeight.Bold)
+            Text(
+                viewModel.activeTab ?: "无打开文件",
+                fontSize = 11.sp, color = IdeColors.TextDim, fontFamily = FontFamily.Monospace,
+                modifier = Modifier.padding(top = 2.dp, bottom = 10.dp),
+            )
+        }
+        val items = viewModel.outline()
+        if (items.isEmpty()) {
+            Box(Modifier.fillMaxWidth().padding(bottom = 48.dp), contentAlignment = Alignment.Center) {
+                Text(
+                    "当前文件没有 label / screen / define 等定义",
+                    fontSize = 12.sp, color = IdeColors.TextDim,
+                )
+            }
+            return@ModalBottomSheet
+        }
+        LazyColumn(
+            Modifier.fillMaxWidth().padding(horizontal = 16.dp),
+            contentPadding = PaddingValues(bottom = 32.dp),
+        ) {
+            items(items.size, key = { "${items[it].kind}-${items[it].name}-${items[it].line}" }) { idx ->
+                val item = items[idx]
+                Row(
+                    verticalAlignment = Alignment.CenterVertically,
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .clickable {
+                            viewModel.requestJump(item.line, 1)
+                            onDismiss()
+                        }
+                        .padding(vertical = 8.dp),
+                ) {
+                    Text(
+                        when (item.kind) {
+                            "label" -> "▶"
+                            "screen" -> "▦"
+                            "define" -> "≡"
+                            "default" -> "◇"
+                            "transform" -> "✦"
+                            "style" -> "S"
+                            else -> "🖼"
+                        },
+                        fontSize = 13.sp, color = IdeColors.Accent,
+                        modifier = Modifier.width(26.dp),
+                    )
+                    Text(item.name, fontSize = 13.sp, fontFamily = FontFamily.Monospace, fontWeight = FontWeight.SemiBold)
+                    Spacer(Modifier.weight(1f))
+                    Text("Ln ${item.line}", fontSize = 11.sp, color = IdeColors.TextDim, fontFamily = FontFamily.Monospace)
+                }
+                HorizontalDivider(color = IdeColors.PanelBorder.copy(alpha = 0.4f))
             }
         }
     }

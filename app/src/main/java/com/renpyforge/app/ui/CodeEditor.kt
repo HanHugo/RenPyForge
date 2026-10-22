@@ -78,6 +78,40 @@ fun CodeEditor(
     var findQuery by remember { mutableStateOf("") }
     var findIdx by remember { mutableIntStateOf(0) }
     var showInsert by remember { mutableStateOf(false) }
+    var suggestions by remember { mutableStateOf<List<String>>(emptyList()) }
+    var suggestPrefixLen by remember { mutableIntStateOf(0) }
+
+    // 补全候选池：内置关键字 + 当前文件里定义的符号
+    fun symbolWords(text: String): List<String> {
+        val out = mutableSetOf<String>()
+        Regex("""(?m)^\s*(?:label|screen|define|default|transform|style|image)\s+([\w.]+)""")
+            .findAll(text)
+            .forEach { out.add(it.groupValues[1]) }
+        return out.toList()
+    }
+    val builtinWords = remember { RpySyntax.allWords() }
+    var userWords by remember(path) { mutableStateOf(emptySet<String>()) }
+    LaunchedEffect(value.text) {
+        userWords = symbolWords(value.text).toSet()
+    }
+    fun updateSuggestions() {
+        val pos = value.selection.start
+        val t = value.text
+        var s = pos
+        while (s > 0 && (t[s - 1].isLetterOrDigit() || t[s - 1] == '_')) s--
+        val word = t.substring(s, pos)
+        if (word.length < 2 || t.getOrNull(pos)?.isLetterOrDigit() == true) {
+            suggestions = emptyList()
+            return
+        }
+        val low = word.lowercase()
+        suggestions = (builtinWords.asSequence() + userWords.asSequence())
+            .filter { it.lowercase().startsWith(low) && !it.equals(word, ignoreCase = true) }
+            .distinct()
+            .take(10)
+            .toList()
+        suggestPrefixLen = pos - s
+    }
 
     LaunchedEffect(content) {
         if (value.text != content) value = TextFieldValue(content)
@@ -131,6 +165,17 @@ fun CodeEditor(
         undoStack.add(value)
         value = next
         onContentChange(value.text)
+    }
+    fun completeWith(word: String) {
+        val pos = value.selection.start
+        val t = value.text
+        val s = (pos - suggestPrefixLen).coerceAtLeast(0)
+        val newText = t.substring(0, s) + word + t.substring(pos)
+        undoStack.add(value)
+        redoStack.clear()
+        value = TextFieldValue(newText, TextRange(s + word.length))
+        onContentChange(newText)
+        suggestions = emptyList()
     }
     fun insertSymbol(sym: String) {
         val pair = mapOf("(" to ")", "[" to "]", "{" to "}", "\"" to "\"", "'" to "'")
@@ -324,12 +369,35 @@ fun CodeEditor(
                         }
                         value = it
                         onContentChange(it.text)
+                        updateSuggestions()
                     },
                     textStyle = editorStyle,
                     cursorBrush = SolidColor(IdeColors.Accent),
                     visualTransformation = transform,
                     modifier = Modifier.padding(end = 40.dp)
                 )
+            }
+        }
+
+        // ── 补全建议条 ──
+        AnimatedVisibility(
+            visible = suggestions.isNotEmpty(),
+            enter = expandVertically(tween(140)) + fadeIn(),
+            exit = shrinkVertically(tween(140)) + fadeOut(),
+        ) {
+            Row(
+                verticalAlignment = androidx.compose.ui.Alignment.CenterVertically,
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .horizontalScroll(rememberScrollState())
+                    .background(IdeColors.AccentDim)
+                    .height(34.dp)
+                    .padding(horizontal = 6.dp),
+                horizontalArrangement = Arrangement.spacedBy(4.dp),
+            ) {
+                suggestions.forEach { word ->
+                    SymbolKey(word) { completeWith(word) }
+                }
             }
         }
 
