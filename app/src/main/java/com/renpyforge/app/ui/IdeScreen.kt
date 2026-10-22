@@ -89,6 +89,7 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.rotate
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.asImageBitmap
 import androidx.compose.ui.platform.LocalClipboardManager
 import androidx.compose.ui.text.AnnotatedString
 import androidx.compose.ui.text.TextStyle
@@ -123,6 +124,18 @@ fun IdeScreen(
     var showNewFile by remember { mutableStateOf(false) }
     var showManual by remember { mutableStateOf(false) }
 
+    // 打开面板时刷新构建历史与资源列表
+    LaunchedEffect(panelOpen) {
+        if (panelOpen) {
+            viewModel.refreshBuildHistory()
+            viewModel.refreshResources()
+        }
+    }
+    // 打开文件时立刻做一次语法检查
+    LaunchedEffect(viewModel.activeTab) {
+        if (viewModel.activeTab != null) viewModel.refreshProblems()
+    }
+
     ModalNavigationDrawer(
         drawerState = drawerState,
         drawerContent = {
@@ -154,7 +167,16 @@ fun IdeScreen(
                     onManual = { showManual = true },
                 )
             },
-            bottomBar = { StatusBar(viewModel) },
+            bottomBar = {
+                StatusBar(
+                    viewModel = viewModel,
+                    panelOpen = panelOpen,
+                    onOpenProblems = {
+                        panelTab = 2
+                        panelOpen = true
+                    },
+                )
+            },
         ) { padding ->
             Column(
                 Modifier
@@ -181,6 +203,8 @@ fun IdeScreen(
                                 content = viewModel.activeContent,
                                 onContentChange = { viewModel.onEditorChange(it) },
                                 onCursorMoved = { l, c -> viewModel.onCursorMoved(l, c) },
+                                jumpLine = viewModel.jumpRequest?.first ?: 0,
+                                onJumpConsumed = { viewModel.consumeJump() },
                                 modifier = Modifier.fillMaxSize(),
                             )
                         }
@@ -603,27 +627,28 @@ private fun BottomPanel(
         Column(Modifier.fillMaxWidth().height(310.dp)) {
             Row(
                 verticalAlignment = Alignment.CenterVertically,
-                modifier = Modifier.height(40.dp).padding(start = 10.dp),
+                modifier = Modifier.height(40.dp).padding(start = 10.dp, end = 4.dp),
             ) {
-                SingleChoiceSegmentedButtonRow(Modifier.width(190.dp).height(30.dp)) {
-                    SegmentedButton(
-                        selected = tab == 0,
-                        onClick = { onTab(0) },
-                        shape = SegmentedButtonDefaults.itemShape(0, 2),
-                        label = { Text("终端", fontSize = 12.sp) },
-                    )
-                    SegmentedButton(
-                        selected = tab == 1,
-                        onClick = { onTab(1) },
-                        shape = SegmentedButtonDefaults.itemShape(1, 2),
-                        label = { Text("构建", fontSize = 12.sp) },
-                    )
+                val tabs = listOf("终端", "构建", "问题", "资源")
+                SingleChoiceSegmentedButtonRow(Modifier.weight(1f).height(30.dp)) {
+                    tabs.forEachIndexed { i, label ->
+                        SegmentedButton(
+                            selected = tab == i,
+                            onClick = { onTab(i) },
+                            shape = SegmentedButtonDefaults.itemShape(i, tabs.size),
+                            label = {
+                                if (i == 2 && viewModel.problems.isNotEmpty()) {
+                                    Text("$label ${viewModel.problems.size}", fontSize = 12.sp)
+                                } else {
+                                    Text(label, fontSize = 12.sp)
+                                }
+                            },
+                        )
+                    }
                 }
-                Spacer(Modifier.weight(1f))
                 IconButton(onClick = onClose, modifier = Modifier.size(30.dp)) {
                     Icon(Icons.Filled.Close, contentDescription = "收起", tint = IdeColors.TextDim, modifier = Modifier.size(16.dp))
                 }
-                Spacer(Modifier.width(6.dp))
             }
             // 面板内容切换动效
             AnimatedContent(
@@ -637,7 +662,9 @@ private fun BottomPanel(
             ) { t ->
                 when (t) {
                     0 -> TerminalConsole(viewModel)
-                    else -> BuildConsole(viewModel, onInstall)
+                    1 -> BuildConsole(viewModel, onInstall)
+                    2 -> ProblemsPane(viewModel)
+                    else -> ResourcePane(viewModel)
                 }
             }
         }
@@ -814,13 +841,188 @@ private fun BuildConsole(viewModel: ProjectViewModel, onInstall: (File) -> Unit)
                 )
             }
         }
+        // 历史产物
+        AnimatedVisibility(
+            visible = viewModel.buildHistory.isNotEmpty(),
+            enter = expandVertically(spring()) + fadeIn(),
+            exit = shrinkVertically() + fadeOut(),
+        ) {
+            Column(
+                Modifier
+                    .fillMaxWidth()
+                    .background(IdeColors.ConsoleBg)
+                    .padding(horizontal = 10.dp, vertical = 4.dp)
+            ) {
+                Text("历史产物（RenPyForge/output/）", fontSize = 10.sp, color = IdeColors.TextDim)
+                viewModel.buildHistory.take(3).forEach { artifact ->
+                    Row(
+                        verticalAlignment = Alignment.CenterVertically,
+                        modifier = Modifier.fillMaxWidth().padding(vertical = 2.dp),
+                    ) {
+                        Column(Modifier.weight(1f)) {
+                            Text(artifact.file.name, fontSize = 11.sp, fontFamily = FontFamily.Monospace, maxLines = 1, overflow = TextOverflow.Ellipsis)
+                            Text(
+                                "${artifact.sizeMb} MB · " + java.text.SimpleDateFormat("MM-dd HH:mm", java.util.Locale.getDefault()).format(artifact.modified),
+                                fontSize = 9.sp, color = IdeColors.TextDim,
+                            )
+                        }
+                        IconButton(onClick = { viewModel.deleteArtifact(artifact.file) }, modifier = Modifier.size(24.dp)) {
+                            Icon(Icons.Filled.Delete, contentDescription = "删除", tint = IdeColors.FailRed.copy(alpha = 0.6f), modifier = Modifier.size(13.dp))
+                        }
+                        Button(
+                            onClick = { onInstall(artifact.file) },
+                            colors = ButtonDefaults.buttonColors(containerColor = IdeColors.AccentDim),
+                            contentPadding = PaddingValues(horizontal = 10.dp),
+                            modifier = Modifier.height(24.dp),
+                        ) { Text("安装", fontSize = 10.sp) }
+                    }
+                }
+            }
+        }
+    }
+}
+
+// ═══════════════════════ 问题面板 ═══════════════════════
+
+@Composable
+private fun ProblemsPane(viewModel: ProjectViewModel) {
+    if (viewModel.problems.isEmpty()) {
+        Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                Box(Modifier.size(8.dp).background(IdeColors.OkGreen, CircleShape))
+                Spacer(Modifier.width(8.dp))
+                Text("没有发现语法问题", fontSize = 13.sp, color = IdeColors.TextDim)
+            }
+        }
+        return
+    }
+    LazyColumn(Modifier.fillMaxSize(), contentPadding = PaddingValues(8.dp)) {
+        items(viewModel.problems.size, key = { "${viewModel.problems[it].line}-${it}" }) { idx ->
+            val p = viewModel.problems[idx]
+            Row(
+                verticalAlignment = Alignment.CenterVertically,
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .clickable { viewModel.requestJump(p.line, 1) }
+                    .padding(horizontal = 6.dp, vertical = 6.dp),
+            ) {
+                Text(
+                    "Ln ${p.line}",
+                    fontSize = 11.sp,
+                    fontFamily = FontFamily.Monospace,
+                    color = IdeColors.FailRed,
+                    modifier = Modifier.width(56.dp),
+                )
+                Text(p.message, fontSize = 12.sp, color = IdeColors.TextFg)
+            }
+        }
+    }
+}
+
+// ═══════════════════════ 资源浏览器 ═══════════════════════
+
+@Composable
+private fun ResourcePane(viewModel: ProjectViewModel) {
+    val clipboard = LocalClipboardManager.current
+    if (viewModel.resourceImages.isEmpty() && viewModel.resourceAudio.isEmpty()) {
+        Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
+            Text(
+                "暂无资源\n把图片放入 game/images/，音频放入 game/audio/",
+                fontSize = 12.sp, color = IdeColors.TextDim,
+                lineHeight = 18.sp,
+            )
+        }
+        return
+    }
+    LazyColumn(Modifier.fillMaxSize(), contentPadding = PaddingValues(8.dp)) {
+        if (viewModel.resourceImages.isNotEmpty()) {
+            item {
+                Text("图片（点击复制路径）", fontSize = 10.sp, color = IdeColors.TextDim)
+                Spacer(Modifier.height(6.dp))
+            }
+            item {
+                LazyRow(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                    items(viewModel.resourceImages, key = { it.first.absolutePath }) { (f, rel) ->
+                        ImageThumb(f) {
+                            clipboard.setText(AnnotatedString(rel))
+                        }
+                    }
+                }
+                Spacer(Modifier.height(10.dp))
+            }
+        }
+        if (viewModel.resourceAudio.isNotEmpty()) {
+            item {
+                Text("音频（点击复制路径）", fontSize = 10.sp, color = IdeColors.TextDim)
+                Spacer(Modifier.height(4.dp))
+            }
+            items(viewModel.resourceAudio, key = { "a" + it.first.absolutePath }) { (f, rel) ->
+                Row(
+                    verticalAlignment = Alignment.CenterVertically,
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .clickable { clipboard.setText(AnnotatedString(rel)) }
+                        .padding(vertical = 4.dp),
+                ) {
+                    Icon(Icons.Filled.Build, contentDescription = null, tint = IdeColors.Accent, modifier = Modifier.size(14.dp))
+                    Spacer(Modifier.width(8.dp))
+                    Text(rel, fontSize = 12.sp, fontFamily = FontFamily.Monospace)
+                }
+            }
+        }
+    }
+}
+
+@Composable
+private fun ImageThumb(f: File, onClick: () -> Unit) {
+    var bmp by remember(f.absolutePath) { mutableStateOf<android.graphics.Bitmap?>(null) }
+    LaunchedEffect(f.absolutePath) {
+        bmp = kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.IO) {
+            try {
+                val opts = android.graphics.BitmapFactory.Options().apply { inSampleSize = 4 }
+                android.graphics.BitmapFactory.decodeFile(f.absolutePath, opts)
+            } catch (_: Exception) { null }
+        }
+    }
+    Column(horizontalAlignment = Alignment.CenterHorizontally, modifier = Modifier.width(76.dp)) {
+        Box(
+            Modifier
+                .size(72.dp)
+                .background(IdeColors.EditorBg, RoundedCornerShape(8.dp))
+                .border(1.dp, IdeColors.PanelBorder, RoundedCornerShape(8.dp))
+                .clickable(onClick = onClick),
+            contentAlignment = Alignment.Center,
+        ) {
+            val b = bmp
+            if (b != null) {
+                androidx.compose.foundation.Image(
+                    bitmap = b.asImageBitmap(),
+                    contentDescription = f.name,
+                    modifier = Modifier.size(72.dp),
+                )
+            } else {
+                Text("…", color = IdeColors.TextDim, fontSize = 16.sp)
+            }
+        }
+        Text(
+            f.name,
+            fontSize = 9.sp,
+            color = IdeColors.TextDim,
+            maxLines = 1,
+            overflow = TextOverflow.Ellipsis,
+            modifier = Modifier.width(76.dp),
+        )
     }
 }
 
 // ═══════════════════════ 状态栏 ═══════════════════════
 
 @Composable
-private fun StatusBar(viewModel: ProjectViewModel) {
+private fun StatusBar(
+    viewModel: ProjectViewModel,
+    panelOpen: Boolean,
+    onOpenProblems: () -> Unit,
+) {
     Surface(color = IdeColors.PanelBg) {
         Row(
             verticalAlignment = Alignment.CenterVertically,
@@ -839,7 +1041,21 @@ private fun StatusBar(viewModel: ProjectViewModel) {
                 "Ln ${viewModel.cursorLine}, Col ${viewModel.cursorCol}",
                 fontSize = 10.sp, color = IdeColors.TextDim, fontFamily = FontFamily.Monospace,
             )
-            Spacer(Modifier.width(12.dp))
+            // 问题数量指示（有问题时才显示，点击打开问题面板）
+            if (viewModel.problems.isNotEmpty() && !panelOpen) {
+                Spacer(Modifier.width(10.dp))
+                Row(
+                    verticalAlignment = Alignment.CenterVertically,
+                    modifier = Modifier.clickable(onClick = onOpenProblems),
+                ) {
+                    Box(Modifier.size(6.dp).background(IdeColors.FailRed, CircleShape))
+                    Text(
+                        " ${viewModel.problems.size} 个问题",
+                        fontSize = 10.sp, color = IdeColors.FailRed,
+                    )
+                }
+            }
+            Spacer(Modifier.width(10.dp))
             // 状态点与文字随状态渐变
             val dotColor by animateColorAsState(
                 when {

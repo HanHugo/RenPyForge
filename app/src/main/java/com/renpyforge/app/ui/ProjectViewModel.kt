@@ -66,6 +66,92 @@ class ProjectViewModel(private val context: Context) {
         cursorCol = col
     }
 
+    // —— 语法检查（防抖） ——
+    data class Problem(val line: Int, val message: String)
+    val problems = mutableStateListOf<Problem>()
+    var jumpRequest by mutableStateOf<Pair<Int, Int>?>(null)   // (line, col) 让编辑器跳转
+        private set
+
+    private var checkJob: kotlinx.coroutines.Job? = null
+
+    fun requestJump(line: Int, col: Int) {
+        jumpRequest = line to col
+    }
+
+    fun consumeJump() {
+        jumpRequest = null
+    }
+
+    private fun scheduleSyntaxCheck(path: String, text: String) {
+        checkJob?.cancel()
+        checkJob = scope.launch {
+            kotlinx.coroutines.delay(500)
+            val found = withContext(Dispatchers.Default) {
+                com.renpyforge.app.project.RpyCheck.check(text)
+            }
+            // 仅当仍在查看同一文件时更新
+            if (activeTab == path) {
+                problems.clear()
+                problems.addAll(found.map { Problem(it.line, it.message) })
+            }
+        }
+    }
+
+    fun refreshProblems() {
+        val path = activeTab ?: return
+        scheduleSyntaxCheck(path, activeContent)
+    }
+
+    // —— 资源浏览 ——
+    var resourceImages by mutableStateOf<List<Pair<File, String>>>(emptyList())  // (file, 相对 game/ 的路径)
+        private set
+    var resourceAudio by mutableStateOf<List<Pair<File, String>>>(emptyList())
+        private set
+
+    fun refreshResources() {
+        val project = currentProject ?: return
+        scope.launch(Dispatchers.IO) {
+            val base = projects.gameDir(project)
+            val imgDir = java.io.File(base, "images")
+            val audDir = java.io.File(base, "audio")
+            val imgs = imgDir.walkTopDown().filter { it.isFile }
+                .map { it to it.relativeTo(base).invariantSeparatorsPath }.toList()
+            val auds = audDir.walkTopDown().filter { it.isFile }
+                .map { it to it.relativeTo(base).invariantSeparatorsPath }.toList()
+            withContext(Dispatchers.Main) {
+                resourceImages = imgs
+                resourceAudio = auds
+            }
+        }
+    }
+
+    // —— 构建历史 ——
+    data class BuildArtifact(val file: File, val sizeMb: Int, val modified: Long)
+    var buildHistory by mutableStateOf<List<BuildArtifact>>(emptyList())
+        private set
+
+    fun refreshBuildHistory() {
+        val project = currentProject ?: return
+        scope.launch(Dispatchers.IO) {
+            val outDir = java.io.File(
+                com.renpyforge.app.project.AppStorage.forgeRoot(context), "output"
+            )
+            val list = outDir.listFiles()
+                ?.filter { it.isFile && it.name.endsWith(".apk") }
+                ?.sortedByDescending { it.lastModified() }
+                ?.map { BuildArtifact(it, (it.length() / 1024 / 1024).toInt(), it.lastModified()) }
+                ?: emptyList()
+            withContext(Dispatchers.Main) { buildHistory = list }
+        }
+    }
+
+    fun deleteArtifact(f: File) {
+        scope.launch(Dispatchers.IO) {
+            f.delete()
+            refreshBuildHistory()
+        }
+    }
+
     // —— 终端 ——
     val terminalLines = mutableStateListOf<String>()
     var terminalRunning by mutableStateOf(false)
@@ -168,6 +254,7 @@ class ProjectViewModel(private val context: Context) {
         tabContents[path] = text
         activeContent = text
         if (!dirtyTabs.contains(path)) dirtyTabs.add(path)
+        scheduleSyntaxCheck(path, text)
     }
 
     fun saveActiveTab() {
@@ -274,6 +361,7 @@ class ProjectViewModel(private val context: Context) {
             try {
                 val apk = pipeline.run()
                 builtApk = apk
+                refreshBuildHistory()
             } catch (e: Exception) {
                 error = e.message ?: e.toString()
                 consoleLine("✘ 构建失败：$error")

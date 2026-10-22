@@ -54,6 +54,8 @@ fun CodeEditor(
     content: String,
     onContentChange: (String) -> Unit,
     onCursorMoved: (line: Int, col: Int) -> Unit,
+    jumpLine: Int = 0,
+    onJumpConsumed: () -> Unit = {},
     modifier: Modifier = Modifier,
 ) {
     var value by remember(path) { mutableStateOf(TextFieldValue(content)) }
@@ -140,6 +142,26 @@ fun CodeEditor(
         val line = value.text.substring(0, pos).count { it == '\n' }
         val target = ((line - 2) * linePx).toInt().coerceIn(0, vScroll.maxValue)
         findScope.launch { vScroll.animateScrollTo(target) }
+    }
+
+    // 问题列表跳转：滚动到指定行并整行选中
+    LaunchedEffect(jumpLine) {
+        if (jumpLine > 0) {
+            val text = value.text
+            var pos = 0
+            var n = 1
+            while (n < jumpLine && pos < text.length) {
+                if (text[pos] == '\n') n++
+                pos++
+            }
+            if (pos <= text.length) {
+                val lineEnd = text.indexOf('\n', pos).let { if (it == -1) text.length else it }
+                value = value.copy(selection = TextRange(pos, lineEnd))
+                val target = ((jumpLine - 2) * linePx).toInt().coerceIn(0, vScroll.maxValue)
+                findScope.launch { vScroll.animateScrollTo(target) }
+            }
+            onJumpConsumed()
+        }
     }
 
     Column(modifier.background(IdeColors.EditorBg)) {
