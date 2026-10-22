@@ -152,6 +152,33 @@ class ProjectViewModel(private val context: Context) {
         }
     }
 
+    // —— 热更新同步 ——
+    var hotSyncing by mutableStateOf(false)
+        private set
+    var hotSyncMessage by mutableStateOf<String?>(null)
+        private set
+
+    fun hotSync() {
+        val project = currentProject ?: return
+        if (hotSyncing) return
+        val pkg = packageName.trim()
+        if (pkg.isEmpty()) {
+            hotSyncMessage = "请先在构建面板填写包名"
+            return
+        }
+        hotSyncing = true
+        hotSyncMessage = "同步中…"
+        scope.launch {
+            val err = com.renpyforge.app.build.HotReload.sync(context, project, pkg)
+            hotSyncing = false
+            hotSyncMessage = if (err == null) {
+                "✔ 已同步到 $pkg — 游戏将在数秒内自动重启加载"
+            } else {
+                "✘ 热更新失败：$err"
+            }
+        }
+    }
+
     // —— 终端 ——
     val terminalLines = mutableStateListOf<String>()
     var terminalRunning by mutableStateOf(false)

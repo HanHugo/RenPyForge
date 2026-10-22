@@ -55,6 +55,7 @@ import androidx.compose.material.icons.filled.Menu
 import androidx.compose.material.icons.filled.PlayArrow
 import androidx.compose.material.icons.filled.Save
 import androidx.compose.material.icons.filled.Search
+import androidx.compose.material.icons.filled.Sync
 import androidx.compose.material.icons.filled.Terminal
 import androidx.compose.material3.Button
 import androidx.compose.material3.ButtonDefaults
@@ -783,6 +784,32 @@ private fun BuildConsole(viewModel: ProjectViewModel, onInstall: (File) -> Unit)
                 cursorBrush = androidx.compose.ui.graphics.SolidColor(IdeColors.Accent),
                 singleLine = true,
                 modifier = Modifier.weight(1f).padding(vertical = 4.dp),
+            )
+        }
+        // 热更新同步行
+        Row(
+            verticalAlignment = Alignment.CenterVertically,
+            modifier = Modifier
+                .fillMaxWidth()
+                .background(IdeColors.ConsoleBg)
+                .padding(horizontal = 8.dp, vertical = 4.dp),
+        ) {
+            Button(
+                onClick = { viewModel.hotSync() },
+                enabled = !viewModel.hotSyncing,
+                colors = ButtonDefaults.buttonColors(containerColor = IdeColors.AccentDim, contentColor = IdeColors.TextFg),
+                contentPadding = PaddingValues(horizontal = 12.dp),
+                modifier = Modifier.height(28.dp),
+            ) {
+                Icon(Icons.Filled.Sync, contentDescription = null, modifier = Modifier.size(14.dp))
+                Spacer(Modifier.width(4.dp))
+                Text(if (viewModel.hotSyncing) "同步中…" else "热更新同步", fontSize = 11.sp)
+            }
+            Spacer(Modifier.width(8.dp))
+            Text(
+                viewModel.hotSyncMessage ?: "免重装推送脚本到已安装的游戏（游戏需为 v1.1.0+ 构建）",
+                fontSize = 10.sp, color = IdeColors.TextDim, maxLines = 2,
+                modifier = Modifier.weight(1f),
             )
         }
         // 构建产物
