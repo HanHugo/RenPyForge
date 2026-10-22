@@ -29,10 +29,11 @@ RenPyForge 把 Ren'Py 官方安卓打包链（RAPT）的全部工具链内置到
 
 | 模块 | 说明 |
 |---|---|
-| 项目管理 | 一键基于官方示例游戏模板新建项目，项目存放在存储根目录 `RenPyForge/projects/` |
-| 脚本编辑 | `.rpy` 文件树 + 等宽编辑器，新建/编辑/删除/保存 |
-| 终端 | 非交互 shell，内置工具已加入 PATH，可直接检查工程与调试 |
-| 构建 | 环境自检 → aapt2 编译链接 → APK 组装 → zipalign → apksig 签名，全程可视化 |
+| 欢迎页 | 项目列表 / 一键新建（官方示例游戏模板），项目存放在存储根目录 `RenPyForge/projects/` |
+| IDE 界面 | 深色 IDE 布局：顶栏构建按钮、侧栏文件树、多标签编辑器、底部面板（终端/构建）、状态栏 |
+| 代码编辑 | `.rpy` 语法高亮、行号、光标行列显示、多文件标签页、未保存标记 |
+| 终端 | 底部面板内置非交互 shell，内置工具已加入 PATH |
+| 构建 | 环境自检 → aapt2 编译链接 → APK 组装 → zipalign → apksig 签名，步骤实时可视 |
 | 安装 | 构建产物保存在 `RenPyForge/output/`，可直接调起系统安装器 |
 
 ### 系统要求
@@ -103,10 +104,11 @@ Install the app and start building — no Termux, no NDK, no PC required.
 
 | Module | Description |
 |---|---|
-| Projects | One-tap project creation from the official sample game template, stored under `RenPyForge/projects/` |
-| Editor | `.rpy` file tree + monospace editor; create/edit/delete/save |
-| Terminal | Non-interactive shell with bundled tools on PATH |
-| Build | Env check → aapt2 compile/link → APK assembly → zipalign → apksig signing, all visualized |
+| Welcome | Project list / one-tap creation from the official template, stored under `RenPyForge/projects/` |
+| IDE layout | Dark IDE shell: toolbar with build button, file-tree sidebar, tabbed editor, bottom panel (terminal/build), status bar |
+| Editor | `.rpy` syntax highlighting, line numbers, cursor position, multi-tab, dirty markers |
+| Terminal | Non-interactive shell in the bottom panel with bundled tools on PATH |
+| Build | Env check → aapt2 compile/link → APK assembly → zipalign → apksig signing, visualized per step |
 | Install | Artifacts saved to `RenPyForge/output/`; install via the system installer |
 
 ### Requirements

@@ -12,8 +12,8 @@ android {
         applicationId = "com.renpyforge.app"
         minSdk = 26
         targetSdk = 34
-        versionCode = 19
-        versionName = "0.6.10"
+        versionCode = 20
+        versionName = "0.7.0"
     }
 
     signingConfigs {
@@ -72,6 +72,7 @@ dependencies {
     implementation(composeBom)
     implementation("androidx.compose.ui:ui")
     implementation("androidx.compose.material3:material3")
+    implementation("androidx.compose.material:material-icons-extended")
     implementation("androidx.compose.ui:ui-tooling-preview")
     debugImplementation("androidx.compose.ui:ui-tooling")
 

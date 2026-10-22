@@ -45,14 +45,26 @@ class ProjectViewModel(private val context: Context) {
     var newProjectName by mutableStateOf("")
     var statusMessage by mutableStateOf<String?>(null)
 
-    // —— 编辑器 ——
+    // —— 编辑器（多标签） ——
     var gameFiles by mutableStateOf<List<String>>(emptyList())
         private set
-    var openFile by mutableStateOf<String?>(null)
+    val openTabs = mutableStateListOf<String>()
+    var activeTab by mutableStateOf<String?>(null)
         private set
-    var editorContent by mutableStateOf("")
-    var editorDirty by mutableStateOf(false)
+    var activeContent by mutableStateOf("")
         private set
+    val dirtyTabs = mutableStateListOf<String>()
+    var cursorLine by mutableStateOf(1)
+        private set
+    var cursorCol by mutableStateOf(1)
+        private set
+
+    private val tabContents = HashMap<String, String>()
+
+    fun onCursorMoved(line: Int, col: Int) {
+        cursorLine = line
+        cursorCol = col
+    }
 
     // —— 终端 ——
     val terminalLines = mutableStateListOf<String>()
@@ -107,41 +119,82 @@ class ProjectViewModel(private val context: Context) {
         }"
         appName = name
         statusMessage = "已打开项目：$name"
+        // 默认打开主脚本
+        val def = gameFiles.firstOrNull { it == "script.rpy" }
+            ?: gameFiles.firstOrNull { it.endsWith(".rpy") }
+        if (def != null) openGameFile(def)
     }
 
     fun closeProject() {
         currentProject = null
-        openFile = null
+        openTabs.clear()
+        dirtyTabs.clear()
+        tabContents.clear()
+        activeTab = null
+        activeContent = ""
         gameFiles = emptyList()
     }
 
     // —— 编辑器 ——
     fun openGameFile(relPath: String) {
-        openFile = relPath
-        editorContent = projects.readFile(currentProject!!, relPath)
-        editorDirty = false
+        val project = currentProject ?: return
+        if (relPath !in openTabs) {
+            openTabs.add(relPath)
+            tabContents[relPath] = projects.readFile(project, relPath)
+        }
+        activateTab(relPath)
+    }
+
+    fun activateTab(relPath: String) {
+        activeTab = relPath
+        activeContent = tabContents[relPath] ?: ""
+    }
+
+    fun closeTab(relPath: String) {
+        val idx = openTabs.indexOf(relPath)
+        if (dirtyTabs.contains(relPath)) saveTabNow(relPath)
+        openTabs.remove(relPath)
+        dirtyTabs.remove(relPath)
+        tabContents.remove(relPath)
+        when {
+            openTabs.isEmpty() -> { activeTab = null; activeContent = "" }
+            idx >= 0 -> activateTab(openTabs[(idx - 1).coerceAtLeast(0)])
+            else -> {}
+        }
     }
 
     fun onEditorChange(text: String) {
-        editorContent = text
-        editorDirty = true
+        val path = activeTab ?: return
+        tabContents[path] = text
+        activeContent = text
+        if (!dirtyTabs.contains(path)) dirtyTabs.add(path)
     }
 
-    fun saveEditor() {
+    fun saveActiveTab() {
+        val path = activeTab ?: return
+        saveTabNow(path)
+    }
+
+    private fun saveTabNow(relPath: String) {
         val project = currentProject ?: return
-        val path = openFile ?: return
+        val content = tabContents[relPath] ?: return
+        dirtyTabs.remove(relPath)
         scope.launch(Dispatchers.IO) {
-            projects.writeFile(project, path, editorContent)
+            projects.writeFile(project, relPath, content)
             withContext(Dispatchers.Main) {
-                editorDirty = false
                 gameFiles = projects.listGameFiles(project)
             }
         }
     }
 
+    fun saveAllTabs() {
+        dirtyTabs.toList().forEach { saveTabNow(it) }
+    }
+
     fun newGameFile(name: String) {
         val project = currentProject ?: return
-        val rel = if (name.endsWith(".rpy") || name.endsWith(".rpym")) name else "$name.rpy"
+        val rel = if (name.endsWith(".rpy") || name.endsWith(".rpym") || name.contains('/')) name
+        else "script/$name.rpy"
         projects.createFile(project, rel)
         gameFiles = projects.listGameFiles(project)
         openGameFile(rel)
@@ -150,7 +203,7 @@ class ProjectViewModel(private val context: Context) {
     fun deleteGameFile(relPath: String) {
         val project = currentProject ?: return
         projects.deleteFile(project, relPath)
-        if (openFile == relPath) { openFile = null; editorContent = "" }
+        closeTab(relPath)
         gameFiles = projects.listGameFiles(project)
     }
 
