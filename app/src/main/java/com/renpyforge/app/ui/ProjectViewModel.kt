@@ -280,8 +280,14 @@ class ProjectViewModel(private val context: Context) {
 
     fun newGameFile(name: String) {
         val project = currentProject ?: return
-        val rel = if (name.endsWith(".rpy") || name.endsWith(".rpym") || name.contains('/')) name
-        else "script/$name.rpy"
+        val clean = name.trim().replace('\\', '/').trimStart('/')
+        if (clean.isEmpty()) return
+        val rel = when {
+            clean.contains('/') -> clean                                  // 用户指定了路径，原样使用
+            clean.endsWith(".rpy") || clean.endsWith(".rpym") -> "script/$clean"
+            clean.contains('.') -> clean                                  // 其他扩展名（png/jpg/ogg…）按原名放 game/ 下
+            else -> "script/$clean.rpy"
+        }
         projects.createFile(project, rel)
         gameFiles = projects.listGameFiles(project)
         openGameFile(rel)
@@ -297,13 +303,14 @@ class ProjectViewModel(private val context: Context) {
     /** 重命名/移动脚本（newName 可含相对路径）；同步更新打开的标签与缓存 */
     fun renameGameFile(oldRel: String, newName: String) {
         val project = currentProject ?: return
-        val trimmed = newName.trim().replace('\\', '/')
+        val trimmed = newName.trim().replace('\\', '/').trim('/')
         if (trimmed.isEmpty()) return
-        val newRel = if (trimmed.endsWith(".rpy") || trimmed.endsWith(".rpym") || trimmed.contains('/')) {
-            if (trimmed.contains('/')) trimmed
-            else oldRel.substringBeforeLast('/', "") + "/" + trimmed
+        // 只有在没有任何扩展名时才自动补 .rpy，避免图片等被强加后缀
+        val base = if (trimmed.contains('.')) trimmed else "$trimmed.rpy"
+        val newRel = if (oldRel.contains('/')) {
+            oldRel.substringBeforeLast('/') + "/" + base
         } else {
-            oldRel.substringBeforeLast('/', "") + "/" + trimmed + ".rpy"
+            base
         }
         val normalized = newRel.split('/').filter { it.isNotEmpty() }.joinToString("/")
         scope.launch(Dispatchers.IO) {

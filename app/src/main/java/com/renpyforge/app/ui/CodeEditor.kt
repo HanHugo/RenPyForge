@@ -366,10 +366,11 @@ fun CodeEditor(
                         }
                     }
                 }
+                val pal = LocalPalette.current
                 val transform = if (RpySyntax.isRpy(path)) {
                     VisualTransformation { text ->
                         androidx.compose.ui.text.input.TransformedText(
-                            RpySyntax.highlight(text.text),
+                            RpySyntax.highlight(text.text, pal.syntax),
                             androidx.compose.ui.text.input.OffsetMapping.Identity,
                         )
                     }

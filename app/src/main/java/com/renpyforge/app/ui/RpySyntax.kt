@@ -1,17 +1,16 @@
 package com.renpyforge.app.ui
 
-import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.text.AnnotatedString
 import androidx.compose.ui.text.SpanStyle
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.buildAnnotatedString
 import androidx.compose.ui.text.withStyle
-import com.renpyforge.app.ui.IdeColors.Syntax
 
 /**
  * Ren'Py 脚本轻量语法高亮。
  * 支持：注释(#)、字符串("…" / '…' / `…`)、关键字(label/screen/define…)、
  * 指令(jump/call/menu…)、数字、{tags}、[interpolation]。
+ * 配色来自当前主题的 [SyntaxPalette]（浅色 / 深色自动切换）。
  */
 object RpySyntax {
 
@@ -31,14 +30,14 @@ object RpySyntax {
         "drag", "draggroup", "mousearea", "on", "contains", "has", "at", "with",
     )
 
-    private fun keywordStyle() = SpanStyle(color = Syntax.Keyword, fontWeight = FontWeight.Bold)
-    private fun directiveStyle() = SpanStyle(color = Syntax.Directive)
-    private fun commentStyle() = SpanStyle(color = Syntax.Comment, fontStyle = androidx.compose.ui.text.font.FontStyle.Italic)
-    private fun stringStyle() = SpanStyle(color = Syntax.StringLit)
-    private fun numberStyle() = SpanStyle(color = Syntax.NumberLit)
-    private fun tagStyle() = SpanStyle(color = Syntax.Tag)
+    fun highlight(text: String, syn: SyntaxPalette): AnnotatedString = buildAnnotatedString {
+        val keywordStyle = SpanStyle(color = syn.keyword, fontWeight = FontWeight.Bold)
+        val directiveStyle = SpanStyle(color = syn.directive)
+        val commentStyle = SpanStyle(color = syn.comment, fontStyle = androidx.compose.ui.text.font.FontStyle.Italic)
+        val stringStyle = SpanStyle(color = syn.stringLit)
+        val numberStyle = SpanStyle(color = syn.number)
+        val tagStyle = SpanStyle(color = syn.tag)
 
-    fun highlight(text: String): AnnotatedString = buildAnnotatedString {
         var i = 0
         val n = text.length
         while (i < n) {
@@ -46,7 +45,7 @@ object RpySyntax {
             when {
                 c == '#' -> {
                     val end = text.indexOf('\n', i).let { if (it == -1) n else it }
-                    withStyle(commentStyle()) { append(text.substring(i, end)) }
+                    withStyle(commentStyle) { append(text.substring(i, end)) }
                     i = end
                 }
                 c == '"' || c == '\'' || c == '`' -> {
@@ -57,7 +56,7 @@ object RpySyntax {
                         if (text[j] == '\n') break
                         j++
                     }
-                    withStyle(stringStyle()) { append(text.substring(i, j)) }
+                    withStyle(stringStyle) { append(text.substring(i, j)) }
                     i = j
                 }
                 c == '{' -> {
@@ -65,7 +64,7 @@ object RpySyntax {
                     if (end == -1 || end - i > 32 || text.substring(i + 1, end).contains('\n')) {
                         append(c); i++
                     } else {
-                        withStyle(tagStyle()) { append(text.substring(i, end + 1)) }
+                        withStyle(tagStyle) { append(text.substring(i, end + 1)) }
                         i = end + 1
                     }
                 }
@@ -75,7 +74,7 @@ object RpySyntax {
                     if (end == -1 || end - i > 48 || text.substring(i + 1, end).contains('\n')) {
                         append(c); i++
                     } else {
-                        withStyle(tagStyle()) { append(text.substring(i, end + 1)) }
+                        withStyle(tagStyle) { append(text.substring(i, end + 1)) }
                         i = end + 1
                     }
                 }
@@ -84,8 +83,8 @@ object RpySyntax {
                     while (j < n && (text[j].isLetterOrDigit() || text[j] == '_')) j++
                     val word = text.substring(i, j)
                     when {
-                        word in keywords -> withStyle(keywordStyle()) { append(word) }
-                        word in directives -> withStyle(directiveStyle()) { append(word) }
+                        word in keywords -> withStyle(keywordStyle) { append(word) }
+                        word in directives -> withStyle(directiveStyle) { append(word) }
                         else -> append(word)
                     }
                     i = j
@@ -93,7 +92,7 @@ object RpySyntax {
                 c.isDigit() -> {
                     var j = i
                     while (j < n && (text[j].isLetterOrDigit() || text[j] == '.')) j++
-                    withStyle(numberStyle()) { append(text.substring(i, j)) }
+                    withStyle(numberStyle) { append(text.substring(i, j)) }
                     i = j
                 }
                 else -> { append(c); i++ }
@@ -101,12 +100,6 @@ object RpySyntax {
         }
     }
 
-    /** 纯文本（非 .rpy 文件）不做高亮，仅给统一前景色 */
-    fun plain(text: String): AnnotatedString = AnnotatedString(text)
-
     fun isRpy(path: String): Boolean =
         path.endsWith(".rpy") || path.endsWith(".rpym")
-
-    @Suppress("unused")
-    private fun unusedColor(): Color = Syntax.Plain
 }

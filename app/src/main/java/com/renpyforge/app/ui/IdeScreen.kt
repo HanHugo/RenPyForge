@@ -1128,7 +1128,7 @@ private fun NewFileDialog(viewModel: ProjectViewModel, onDismiss: () -> Unit) {
                     singleLine = true,
                 )
                 Text(
-                    "将创建于 game/script/<名称>.rpy，如需其他路径请填写相对路径。",
+                    "无扩展名 → 创建 game/script/<名称>.rpy；\n带扩展名（如 bg.png）→ 按原名创建到 game/ 下；\n也可填写相对路径精确指定。",
                     fontSize = 12.sp, color = IdeColors.TextDim,
                 )
             }
