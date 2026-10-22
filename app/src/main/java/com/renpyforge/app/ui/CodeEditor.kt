@@ -11,12 +11,14 @@ import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.text.BasicTextField
 import androidx.compose.foundation.verticalScroll
+import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
@@ -40,6 +42,7 @@ import androidx.compose.ui.text.style.LineHeightStyle
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.renpyforge.app.ui.IdeColors.TextDim
+import kotlinx.coroutines.launch
 
 private const val LINE_HEIGHT_SP = 20
 private const val BASE_FONT_SP = 13
@@ -56,6 +59,9 @@ fun CodeEditor(
     var value by remember(path) { mutableStateOf(TextFieldValue(content)) }
     var curLine by remember(path) { mutableIntStateOf(1) }
     var fontScale by remember { mutableFloatStateOf(1f) }
+    var showFind by remember { mutableStateOf(false) }
+    var findQuery by remember { mutableStateOf("") }
+    var findIdx by remember { mutableIntStateOf(0) }
     val clipboard = LocalClipboardManager.current
 
     LaunchedEffect(content) {
@@ -113,6 +119,29 @@ fun CodeEditor(
     val vScroll = rememberScrollState()
     val hScroll = rememberScrollState()
 
+    // —— 查找 ——
+    val linePx = with(density) { lineSp.sp.toPx() }
+    val findScope = androidx.compose.runtime.rememberCoroutineScope()
+    fun findMatches(): List<Int> {
+        val q = findQuery.trim()
+        if (q.isEmpty()) return emptyList()
+        val lower = value.text.lowercase()
+        val ql = q.lowercase()
+        val out = mutableListOf<Int>()
+        var i = lower.indexOf(ql)
+        while (i != -1 && out.size < 2000) { out.add(i); i = lower.indexOf(ql, i + 1) }
+        return out
+    }
+    fun gotoMatch(matches: List<Int>, forward: Boolean) {
+        if (matches.isEmpty()) return
+        findIdx = (if (forward) findIdx + 1 else findIdx - 1 + matches.size).mod(matches.size)
+        val pos = matches[findIdx]
+        value = value.copy(selection = TextRange(pos, pos + findQuery.trim().length))
+        val line = value.text.substring(0, pos).count { it == '\n' }
+        val target = ((line - 2) * linePx).toInt().coerceIn(0, vScroll.maxValue)
+        findScope.launch { vScroll.animateScrollTo(target) }
+    }
+
     Column(modifier.background(IdeColors.EditorBg)) {
         // ── 工具条：剪贴板操作 + 缩放 ──
         Row(
@@ -146,6 +175,47 @@ fun CodeEditor(
             )
             EditorAction("A−") { fontScale = (fontScale - 0.15f).coerceAtLeast(0.5f) }
             EditorAction("A+") { fontScale = (fontScale + 0.15f).coerceAtMost(2.5f) }
+            Box(
+                Modifier
+                    .padding(horizontal = 6.dp)
+                    .height(16.dp)
+                    .width(1.dp)
+                    .background(IdeColors.PanelBorder)
+            )
+            EditorAction(if (showFind) "收起查找" else "查找") { showFind = !showFind }
+        }
+        // ── 查找栏 ──
+        androidx.compose.animation.AnimatedVisibility(
+            visible = showFind,
+            enter = androidx.compose.animation.expandVertically() + androidx.compose.animation.fadeIn(),
+            exit = androidx.compose.animation.shrinkVertically() + androidx.compose.animation.fadeOut(),
+        ) {
+            Row(
+                verticalAlignment = androidx.compose.ui.Alignment.CenterVertically,
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .background(IdeColors.ConsoleBg)
+                    .padding(horizontal = 10.dp, vertical = 4.dp),
+            ) {
+                Text("⌕", color = IdeColors.TextDim, fontSize = 14.sp)
+                Spacer(Modifier.width(6.dp))
+                BasicTextField(
+                    value = findQuery,
+                    onValueChange = { findQuery = it; findIdx = 0 },
+                    textStyle = TextStyle(fontFamily = FontFamily.Monospace, fontSize = 12.sp, color = IdeColors.TextFg),
+                    cursorBrush = SolidColor(IdeColors.Accent),
+                    singleLine = true,
+                    modifier = Modifier.weight(1f).padding(vertical = 4.dp),
+                )
+                val matches = findMatches()
+                Text(
+                    if (findQuery.isBlank()) "" else "${if (matches.isEmpty()) 0 else findIdx + 1}/${matches.size}",
+                    fontSize = 11.sp, color = IdeColors.TextDim,
+                )
+                Spacer(Modifier.width(4.dp))
+                EditorAction("▲") { gotoMatch(matches, false) }
+                EditorAction("▼") { gotoMatch(matches, true) }
+            }
         }
         Box(
             Modifier

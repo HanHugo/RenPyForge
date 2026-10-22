@@ -968,10 +968,108 @@ transform shake:
     linear 0.2 xoffset 10""",
         "# 注释；transform 定义动画；官方文档 renpy.org/doc 见「更多」。",
     ),
+    ManualSection(
+        "ATL 动画", """show eileen happy:
+    xalign 0.5
+    linear 1.0 zoom 1.5
+
+transform slidein:
+    xoffset -400
+    easein 0.5 xoffset 0""",
+        "show 时接 ATL 块做位移动画；transform 定义可复用动画；easein/linear 是插值方式。",
+    ),
+    ManualSection(
+        "label 参数", """label start(route="A"):
+    "路线 [route]"
+    call chapter(3)
+
+label chapter(n):
+    "第 [n] 章"
+    return""",
+        "label 可带默认参数，call/jump 时传参；[n] 插值使用。",
+    ),
+    ManualSection(
+        "Python 块", """init python:
+    def double(x):
+        return x * 2
+
+label start:
+    $ answer = double(21)
+    "答案是 [answer]"
+""",
+        "init python 在启动时执行（定义函数/常量）；$ 单行；python: 块多行。",
+    ),
+    ManualSection(
+        "条件显示 showif", """screen hp():
+    showif hp_value > 50:
+        text "状态良好" color "#6AAB73"
+    else:
+        text "状态不佳" color "#E55765\"""",
+        "screen 内 showif 根据变量切换显示，带平滑过渡。",
+    ),
+    ManualSection(
+        "角色 Character", """define n = Character("旁白", kind=nvl)
+define e = Character("艾琳",
+    color="#c8ffc8",
+    who_suffix="：")
+
+label start:
+    n "NVL 模式旁白。"
+    e "带颜色的名字。"
+""",
+        "Character 支持名字颜色、前后缀、NVL 等大量参数，是文本表现的核心。",
+    ),
+)
+
+private val devManualSections = listOf(
+    ManualSection(
+        "完整工作流", """1. 欢迎页 → 新建项目
+2. 编辑 script.rpy（或新建脚本）
+3. 顶栏 ▶ 构建
+4. 构建完成 → 安装""",
+        "构建会自动保存所有未保存的文件。产物 APK 位于存储根目录 RenPyForge/output/。",
+    ),
+    ManualSection(
+        "资源文件", """game/
+├── script.rpy
+├── images/       ← 图片自动注册
+│   └── bg room.png   → scene bg room
+└── audio/        ← 音频
+    └── bgm.ogg       → play music "audio/bgm.ogg\"""",
+        "images/ 下的图片文件名（去扩展名）自动成为图像名；空格即空格：\"bg room.png\" 对应 scene bg room。",
+    ),
+    ManualSection(
+        "文件管理与传输", """手机存储根目录：
+RenPyForge/projects/<项目名>/game/""",
+        "项目是普通文件夹：用文件管理器、USB 连电脑均可拷入图片/音频/字体。改完回 App 里直接构建。",
+    ),
+    ManualSection(
+        "构建配置", """包名：org.renpy.forge.<项目名>
+  （可在构建面板修改）
+游戏名：显示在桌面图标下
+签名：内置密钥，同一包名
+      覆盖安装即可更新""",
+        "改包名会生成一个「新应用」而非覆盖旧版；想更新已安装的游戏请保持包名不变。",
+    ),
+    ManualSection(
+        "脚本拆分", """game/script.rpy      ← 主剧情
+game/chapter1.rpy    ← 第一章
+game/characters.rpy  ← 角色定义""",
+        "多个 .rpy 文件像一个文件一样工作；label 可跨文件跳转。文件名任意，建议英文。",
+    ),
+    ManualSection(
+        "常见问题", """✘ 构建失败 → 看构建面板控制台的 ✘ 行
+✘ 脚本报错 → 检查缩进必须是 4 空格
+✘ 图片不显示 → 检查文件名与 scene/show 一致
+✘ 中文乱码 → 使用支持中文的字体文件""",
+        "游戏运行报错会显示 traceback，对照行号回编辑器修复即可。",
+    ),
 )
 
 @Composable
 private fun ManualSheet(onDismiss: () -> Unit) {
+    var manualTab by remember { mutableIntStateOf(0) }
+    val sections = if (manualTab == 0) manualSections else devManualSections
     ModalBottomSheet(
         onDismissRequest = onDismiss,
         sheetState = rememberModalBottomSheetState(skipPartiallyExpanded = true),
@@ -979,42 +1077,67 @@ private fun ManualSheet(onDismiss: () -> Unit) {
         contentColor = IdeColors.TextFg,
     ) {
         Column(Modifier.padding(horizontal = 16.dp)) {
-            Text("Ren'Py 代码手册", fontSize = 18.sp, fontWeight = FontWeight.Bold)
+            Text("Ren'Py 手册", fontSize = 18.sp, fontWeight = FontWeight.Bold)
             Text(
-                "最常用语句速查 · 完整文档见 renpy.org/doc",
+                "最常用语句与开发流程速查 · 完整文档见 renpy.org/doc",
                 fontSize = 11.sp, color = IdeColors.TextDim,
                 modifier = Modifier.padding(top = 2.dp, bottom = 10.dp),
             )
+            SingleChoiceSegmentedButtonRow(Modifier.width(220.dp).height(32.dp).padding(bottom = 10.dp)) {
+                SegmentedButton(
+                    selected = manualTab == 0,
+                    onClick = { manualTab = 0 },
+                    shape = SegmentedButtonDefaults.itemShape(0, 2),
+                    label = { Text("代码手册", fontSize = 12.sp) },
+                )
+                SegmentedButton(
+                    selected = manualTab == 1,
+                    onClick = { manualTab = 1 },
+                    shape = SegmentedButtonDefaults.itemShape(1, 2),
+                    label = { Text("开发手册", fontSize = 12.sp) },
+                )
+            }
         }
-        LazyColumn(
-            Modifier.fillMaxWidth().padding(horizontal = 16.dp),
-            contentPadding = PaddingValues(bottom = 32.dp),
-            verticalArrangement = Arrangement.spacedBy(12.dp),
-        ) {
-            items(manualSections.size, key = { manualSections[it].title }) { idx ->
-                val s = manualSections[idx]
-                Column(
-                    Modifier
-                        .fillMaxWidth()
-                        .background(IdeColors.EditorBg, RoundedCornerShape(10.dp))
-                        .border(1.dp, IdeColors.PanelBorder, RoundedCornerShape(10.dp))
-                        .padding(12.dp)
-                ) {
-                    Text(s.title, fontSize = 14.sp, fontWeight = FontWeight.SemiBold, color = IdeColors.Accent)
-                    Spacer(Modifier.height(6.dp))
-                    Text(
-                        s.code,
-                        fontSize = 11.sp,
-                        fontFamily = FontFamily.Monospace,
-                        lineHeight = 16.sp,
-                        color = IdeColors.ConsoleFg,
-                        modifier = Modifier
+        AnimatedContent(
+            targetState = manualTab,
+            transitionSpec = {
+                val dir = if (targetState > initialState) 1 else -1
+                (fadeIn(tween(160)) + slideInHorizontally(tween(200)) { dir * it / 10 }) togetherWith
+                    fadeOut(tween(120))
+            },
+            label = "manualTab",
+        ) { t ->
+            val list = if (t == 0) manualSections else devManualSections
+            LazyColumn(
+                Modifier.fillMaxWidth().padding(horizontal = 16.dp),
+                contentPadding = PaddingValues(bottom = 32.dp),
+                verticalArrangement = Arrangement.spacedBy(12.dp),
+            ) {
+                items(list.size, key = { list[it].title }) { idx ->
+                    val s = list[idx]
+                    Column(
+                        Modifier
                             .fillMaxWidth()
-                            .background(IdeColors.ConsoleBg, RoundedCornerShape(6.dp))
-                            .padding(8.dp),
-                    )
-                    Spacer(Modifier.height(6.dp))
-                    Text(s.desc, fontSize = 12.sp, color = IdeColors.TextDim)
+                            .background(IdeColors.EditorBg, RoundedCornerShape(10.dp))
+                            .border(1.dp, IdeColors.PanelBorder, RoundedCornerShape(10.dp))
+                            .padding(12.dp)
+                    ) {
+                        Text(s.title, fontSize = 14.sp, fontWeight = FontWeight.SemiBold, color = IdeColors.Accent)
+                        Spacer(Modifier.height(6.dp))
+                        Text(
+                            s.code,
+                            fontSize = 11.sp,
+                            fontFamily = FontFamily.Monospace,
+                            lineHeight = 16.sp,
+                            color = IdeColors.ConsoleFg,
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .background(IdeColors.ConsoleBg, RoundedCornerShape(6.dp))
+                                .padding(8.dp),
+                        )
+                        Spacer(Modifier.height(6.dp))
+                        Text(s.desc, fontSize = 12.sp, color = IdeColors.TextDim)
+                    }
                 }
             }
         }

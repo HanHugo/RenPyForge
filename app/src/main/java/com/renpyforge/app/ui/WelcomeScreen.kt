@@ -2,6 +2,8 @@
 
 package com.renpyforge.app.ui
 
+import android.content.Intent
+import android.net.Uri
 import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.animation.core.animateFloatAsState
 import androidx.compose.animation.core.spring
@@ -10,6 +12,7 @@ import androidx.compose.animation.fadeIn
 import androidx.compose.animation.fadeOut
 import androidx.compose.animation.shrinkVertically
 import androidx.compose.foundation.background
+import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -30,20 +33,27 @@ import androidx.compose.material.icons.filled.Add
 import androidx.compose.material.icons.filled.Delete
 import androidx.compose.material.icons.filled.Folder
 import androidx.compose.material.icons.filled.Gamepad
+import androidx.compose.material.icons.filled.Info
+import androidx.compose.material.icons.filled.Public
+import androidx.compose.material.icons.filled.Groups
+import androidx.compose.material.icons.filled.Code
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Button
 import androidx.compose.material3.Card
 import androidx.compose.material3.CardDefaults
 import androidx.compose.material3.ExtendedFloatingActionButton
+import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.LargeTopAppBar
 import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.ModalBottomSheet
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Scaffold
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
+import androidx.compose.material3.rememberModalBottomSheetState
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
@@ -53,9 +63,11 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.scale
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import com.renpyforge.app.BuildConfig
 
 /**
  * 欢迎页（MD3）：LargeTopAppBar + 项目卡片列表 + ExtendedFAB 新建。
@@ -68,6 +80,7 @@ fun WelcomeScreen(
 ) {
     var showCreate by remember { mutableStateOf(false) }
     var pendingDelete by remember { mutableStateOf<String?>(null) }
+    var showAbout by remember { mutableStateOf(false) }
 
     Scaffold(
         containerColor = IdeColors.AppBg,
@@ -90,6 +103,11 @@ fun WelcomeScreen(
                                 color = IdeColors.TextDim,
                             )
                         }
+                    }
+                },
+                actions = {
+                    IconButton(onClick = { showAbout = true }) {
+                        Icon(Icons.Filled.Info, contentDescription = "关于", modifier = Modifier.size(22.dp))
                     }
                 },
                 colors = androidx.compose.material3.TopAppBarDefaults.largeTopAppBarColors(
@@ -268,5 +286,111 @@ fun WelcomeScreen(
             },
             dismissButton = { TextButton(onClick = { pendingDelete = null }) { Text("取消") } },
         )
+    }
+
+    // 关于页
+    if (showAbout) {
+        AboutSheet { showAbout = false }
+    }
+}
+
+/** 关于页（MD3 ModalBottomSheet）：版本信息 + GitHub / QQ 群 / Ren'Py 官网链接 */
+@Composable
+private fun AboutSheet(onDismiss: () -> Unit) {
+    val context = LocalContext.current
+    fun open(url: String) {
+        try {
+            context.startActivity(Intent(Intent.ACTION_VIEW, Uri.parse(url)))
+        } catch (_: Exception) { /* 无浏览器时静默 */ }
+    }
+
+    ModalBottomSheet(
+        onDismissRequest = onDismiss,
+        sheetState = rememberModalBottomSheetState(skipPartiallyExpanded = true),
+        containerColor = IdeColors.PanelBg,
+        contentColor = IdeColors.TextFg,
+    ) {
+        Column(Modifier.padding(horizontal = 20.dp)) {
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                Icon(
+                    Icons.Filled.Gamepad,
+                    contentDescription = null,
+                    tint = IdeColors.Accent,
+                    modifier = Modifier.size(40.dp),
+                )
+                Spacer(Modifier.width(12.dp))
+                Column {
+                    Text("RenPyForge", fontSize = 20.sp, fontWeight = FontWeight.Bold)
+                    Text(
+                        "v${BuildConfig.VERSION_NAME} · 手机端 Ren'Py IDE",
+                        fontSize = 12.sp, color = IdeColors.TextDim,
+                    )
+                }
+            }
+            Spacer(Modifier.height(8.dp))
+            Text(
+                "在手机上创建 Ren'Py 项目、编写脚本，并全链路完成 APK 构建与签名——无需电脑。",
+                fontSize = 12.sp, color = IdeColors.TextDim,
+            )
+            Spacer(Modifier.height(14.dp))
+            HorizontalDivider(color = IdeColors.PanelBorder)
+            Spacer(Modifier.height(6.dp))
+
+            AboutLink(
+                icon = { Icon(Icons.Filled.Code, contentDescription = null, tint = IdeColors.Accent, modifier = Modifier.size(20.dp)) },
+                title = "GitHub 项目主页",
+                subtitle = "github.com/HanHugo/RenPyForge",
+            ) { open("https://github.com/HanHugo/RenPyForge") }
+
+            AboutLink(
+                icon = { Icon(Icons.Filled.Groups, contentDescription = null, tint = IdeColors.OkGreen, modifier = Modifier.size(20.dp)) },
+                title = "QQ 交流群",
+                subtitle = "群号 860798476 · 点击加入",
+            ) { open("https://qun.qq.com/universal-share/share?ac=1&authKey=O7nI2jJY5%2FZG8ixRzNlF0mPn7i%2FzuzZmPlR1G2tzmgoRmh2lWxbtf8caoQr9XMWh&busi_data=eyJncm91cENvZGUiOiI4NjA3OTg0NzYiLCJ0b2tlbiI6Ii9GWkJOcEw4Q1JnckJPVVhRcjhTS004YVpnNlZxWUw5R2s3UVF1ZkpJaGUyMXBzUDRXSEtvNTAwMEgzL3pDZDQiLCJ1aW4iOiIyMDIxODYyODgzIn0%3D&data=5tKuIrbXEuPo9E1xw9pXQ-tLsE96_6A4UkVlUaP3zebovAlwiRgZtBA6YPT4lA_Jzsq6PIhderE-i7T6fvupdQ&svctype=4&tempid=h5_group_info") }
+
+            AboutLink(
+                icon = { Icon(Icons.Filled.Public, contentDescription = null, tint = IdeColors.WarnOrange, modifier = Modifier.size(20.dp)) },
+                title = "Ren'Py 官网与文档",
+                subtitle = "renpy.org",
+            ) { open("https://www.renpy.org") }
+
+            Spacer(Modifier.height(6.dp))
+            HorizontalDivider(color = IdeColors.PanelBorder)
+            Spacer(Modifier.height(10.dp))
+            Text(
+                "RenPyForge 以 MIT 许可开源。内置 Ren'Py 引擎版权归 Ren'Py 项目所有，" +
+                    "构建工具来自 AOSP/RAPT，均遵循其原始许可协议。",
+                fontSize = 11.sp, color = IdeColors.TextDim.copy(alpha = 0.8f),
+            )
+            Spacer(Modifier.height(28.dp))
+        }
+    }
+}
+
+@Composable
+private fun AboutLink(
+    icon: @Composable () -> Unit,
+    title: String,
+    subtitle: String,
+    onClick: () -> Unit,
+) {
+    Row(
+        verticalAlignment = Alignment.CenterVertically,
+        modifier = Modifier
+            .fillMaxWidth()
+            .clickable(onClick = onClick)
+            .padding(vertical = 12.dp),
+    ) {
+        Box(
+            Modifier
+                .size(38.dp)
+                .background(IdeColors.HoverBg, RoundedCornerShape(10.dp)),
+            contentAlignment = Alignment.Center,
+        ) { icon() }
+        Spacer(Modifier.width(12.dp))
+        Column {
+            Text(title, fontSize = 14.sp, fontWeight = FontWeight.Medium)
+            Text(subtitle, fontSize = 11.sp, color = IdeColors.TextDim)
+        }
     }
 }
