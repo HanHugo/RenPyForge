@@ -2,7 +2,8 @@
 .gradle/
 local.properties
 .idea/
-build/
+/build/
+/app/build/
 captures/
 .externalNativeBuild/
 .cxx/

@@ -1,6 +1,7 @@
 package com.renpyforge.app.ui
 
 import android.content.Context
+import android.net.Uri
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateListOf
 import androidx.compose.runtime.mutableStateOf
@@ -10,6 +11,7 @@ import com.renpyforge.app.build.BuildPipeline
 import com.renpyforge.app.build.StepId
 import com.renpyforge.app.build.StepState
 import com.renpyforge.app.project.AppStorage
+import com.renpyforge.app.project.ProjectConfig
 import com.renpyforge.app.project.ProjectManager
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
@@ -44,6 +46,10 @@ class ProjectViewModel(private val context: Context) {
         private set
     var newProjectName by mutableStateOf("")
     var statusMessage by mutableStateOf<String?>(null)
+
+    /** 当前项目的构建配置（包名 / 应用名 / 图标 / 启动图） */
+    var projectConfig by mutableStateOf<ProjectConfig?>(null)
+        private set
 
     // —— 编辑器（多标签） ——
     var gameFiles by mutableStateOf<List<String>>(emptyList())
@@ -217,11 +223,10 @@ class ProjectViewModel(private val context: Context) {
     fun openProject(name: String) {
         currentProject = name
         gameFiles = projects.listGameFiles(name)
-        packageName = "org.renpy.forge.${
-            name.lowercase().replace(Regex("[^a-z0-9]"), "")
-                .ifBlank { "game" }
-        }"
-        appName = name
+        val cfg = projects.readConfig(name)
+        projectConfig = cfg
+        packageName = cfg.packageName
+        appName = cfg.appName
         statusMessage = "已打开项目：$name"
         // 默认打开主脚本
         val def = gameFiles.firstOrNull { it == "script.rpy" }
@@ -231,12 +236,69 @@ class ProjectViewModel(private val context: Context) {
 
     fun closeProject() {
         currentProject = null
+        projectConfig = null
         openTabs.clear()
         dirtyTabs.clear()
         tabContents.clear()
         activeTab = null
         activeContent = ""
         gameFiles = emptyList()
+    }
+
+    // —— 项目配置（包名 / 应用名 / 图标 / 启动图） ——
+
+    fun saveProjectConfig(pkg: String, name: String) {
+        val project = currentProject ?: return
+        val def = ProjectConfig.defaults(project)
+        val cfg = (projectConfig ?: projects.readConfig(project)).copy(
+            packageName = pkg.trim().ifBlank { def.packageName },
+            appName = name.trim().ifBlank { project },
+        )
+        projects.writeConfig(project, cfg)
+        projectConfig = cfg
+        packageName = cfg.packageName
+        appName = cfg.appName
+        statusMessage = "项目信息已保存"
+    }
+
+    /** 导入自定义图标（kind = "icon"）或启动图（kind = "splash"） */
+    fun importProjectImage(kind: String, uri: Uri) {
+        val project = currentProject ?: return
+        val fileName = if (kind == "icon") "icon.img" else "splash.img"
+        scope.launch(Dispatchers.IO) {
+            try {
+                val input = context.contentResolver.openInputStream(uri)
+                    ?: throw IllegalStateException("无法读取所选图片")
+                projects.saveAsset(project, fileName, input)
+                val rel = "assets/$fileName"
+                val cur = projectConfig ?: projects.readConfig(project)
+                val cfg = if (kind == "icon") cur.copy(iconFile = rel) else cur.copy(splashFile = rel)
+                projects.writeConfig(project, cfg)
+                withContext(Dispatchers.Main) {
+                    projectConfig = cfg
+                    statusMessage = if (kind == "icon") "图标已更新" else "启动图已更新"
+                }
+            } catch (e: Exception) {
+                withContext(Dispatchers.Main) { statusMessage = "导入失败：${e.message}" }
+            }
+        }
+    }
+
+    fun removeProjectImage(kind: String) {
+        val project = currentProject ?: return
+        val fileName = if (kind == "icon") "icon.img" else "splash.img"
+        projects.assetFile(project, fileName).delete()
+        val cur = projectConfig ?: return
+        val cfg = if (kind == "icon") cur.copy(iconFile = null) else cur.copy(splashFile = null)
+        projects.writeConfig(project, cfg)
+        projectConfig = cfg
+    }
+
+    /** 当前项目已选择的图片文件（不存在返回 null） */
+    fun projectImage(kind: String): File? {
+        val project = currentProject ?: return null
+        val rel = if (kind == "icon") projectConfig?.iconFile else projectConfig?.splashFile
+        return rel?.let { File(projects.projectDir(project), it) }?.takeIf { it.isFile }
     }
 
     // —— 编辑器 ——
@@ -442,9 +504,13 @@ class ProjectViewModel(private val context: Context) {
         console.clear()
 
         scope.launch {
+            val cfg = projectConfig ?: projects.readConfig(project)
+            val def = ProjectConfig.defaults(project)
             val pipeline = BuildPipeline(context, project, BuildConfig(
-                packageName = packageName.ifBlank { "org.renpy.forge.game" },
-                appName = appName.ifBlank { "RenPy Game" },
+                packageName = cfg.packageName.ifBlank { def.packageName },
+                appName = cfg.appName.ifBlank { project },
+                iconFile = cfg.iconFile?.let { File(projects.projectDir(project), it) }?.takeIf { it.isFile },
+                splashFile = cfg.splashFile?.let { File(projects.projectDir(project), it) }?.takeIf { it.isFile },
             )) { step, state, message ->
                 val idx = StepId.entries.indexOf(step)
                 stepStates[idx] = step to state

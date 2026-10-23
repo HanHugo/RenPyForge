@@ -102,4 +102,27 @@ class ProjectManager(private val context: Context) {
         val f = File(base, relPath).canonicalFile
         return if (f.absolutePath.startsWith(base.absolutePath)) f else null
     }
+
+    // —— 项目配置（包名 / 应用名 / 图标 / 启动图） ——
+
+    private fun configFile(name: String): File = File(projectDir(name), "forge-project.json")
+
+    fun readConfig(name: String): ProjectConfig {
+        val f = configFile(name)
+        return if (f.isFile) ProjectConfig.fromJson(f.readText(), name) else ProjectConfig.defaults(name)
+    }
+
+    fun writeConfig(name: String, config: ProjectConfig) {
+        configFile(name).writeText(config.toJson())
+    }
+
+    /** 项目资源目录（图标 / 启动图原件，不打进 game/） */
+    fun assetFile(name: String, fileName: String): File =
+        File(File(projectDir(name), "assets"), fileName).also { it.parentFile?.mkdirs() }
+
+    fun saveAsset(name: String, fileName: String, input: java.io.InputStream): File {
+        val f = assetFile(name, fileName)
+        f.outputStream().use { input.copyTo(it) }
+        return f
+    }
 }

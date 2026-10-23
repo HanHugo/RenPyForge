@@ -62,6 +62,7 @@ import androidx.compose.material.icons.filled.RadioButtonUnchecked
 import androidx.compose.material.icons.filled.CheckCircle
 import androidx.compose.material.icons.filled.Save
 import androidx.compose.material.icons.filled.Search
+import androidx.compose.material.icons.filled.Settings
 import androidx.compose.material.icons.filled.Terminal
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Button
@@ -119,31 +120,24 @@ import java.io.File
  * · 宽屏（≥640dp）：文件树常驻左栏，与编辑器左右分栏（桌面 IDE 形态）
  * · 窄屏：文件树走 MD3 抽屉（边缘手势可拉出）
  * · 紧凑单行工具条（无大标题栏），标签行紧贴编辑器
- * · 底部面板三档高度，拖动把手点击切换，高度动画过渡
+ * · 构建台 / 终端是独立全屏页面（由根导航承载），不占用编辑区
  */
 @Composable
 fun IdeScreen(
     viewModel: ProjectViewModel,
-    onInstall: (File) -> Unit,
+    onBuild: () -> Unit,
+    onOpenConsole: (Int) -> Unit,
 ) {
     val drawerState = rememberDrawerState(DrawerValue.Closed)
     val scope = rememberCoroutineScope()
-    var panelOpen by remember { mutableStateOf(false) }
-    var panelTab by remember { mutableIntStateOf(0) }
-    var panelTall by remember { mutableStateOf(false) }
     var showNewFile by remember { mutableStateOf(false) }
     var showManual by remember { mutableStateOf(false) }
     var showSearch by remember { mutableStateOf(false) }
     var showTools by remember { mutableStateOf(false) }
     var showOutline by remember { mutableStateOf(false) }
+    var showProjectSettings by remember { mutableStateOf(false) }
     var renameTarget by remember { mutableStateOf<String?>(null) }
 
-    LaunchedEffect(panelOpen) {
-        if (panelOpen) {
-            viewModel.refreshBuildHistory()
-            viewModel.refreshResources()
-        }
-    }
     LaunchedEffect(viewModel.activeTab) {
         if (viewModel.activeTab != null) viewModel.refreshProblems()
     }
@@ -172,10 +166,11 @@ fun IdeScreen(
                     onSave = { viewModel.saveAllTabs() },
                     onManual = { showManual = true },
                     onSearch = { showSearch = true },
-                    onPanelToggle = { panelOpen = !panelOpen },
+                    onProjectSettings = { showProjectSettings = true },
                     showTools = showTools,
                     onToggleTools = { showTools = !showTools },
                     onOutline = { showOutline = true },
+                    onBuild = onBuild,
                 )
                 // 构建中的细进度条
                 AnimatedVisibility(
@@ -187,23 +182,6 @@ fun IdeScreen(
                         modifier = Modifier.fillMaxWidth().height(2.dp),
                         color = IdeColors.OkGreen,
                         trackColor = IdeColors.PanelBg,
-                    )
-                }
-
-                // —— 底部面板（放在编辑器上方， docking 在状态栏之上） ——
-                AnimatedVisibility(
-                    visible = panelOpen,
-                    enter = slideInVertically(tween(240)) { it } + fadeIn(tween(240)),
-                    exit = slideOutVertically(tween(200)) { it } + fadeOut(tween(160)),
-                ) {
-                    BottomPanel(
-                        viewModel = viewModel,
-                        tab = panelTab,
-                        onTab = { panelTab = it },
-                        tall = panelTall,
-                        onToggleTall = { panelTall = !panelTall },
-                        onClose = { panelOpen = false },
-                        onInstall = onInstall,
                     )
                 }
 
@@ -239,12 +217,8 @@ fun IdeScreen(
 
                 StatusBar(
                     viewModel = viewModel,
-                    panelOpen = panelOpen,
-                    onOpenProblems = {
-                        panelTab = 2
-                        panelOpen = true
-                    },
-                    onTogglePanel = { panelOpen = !panelOpen },
+                    onOpenTerminal = { onOpenConsole(1) },
+                    onOpenProblems = { onOpenConsole(2) },
                 )
             }
         }
@@ -273,6 +247,7 @@ fun IdeScreen(
     if (showManual) ManualSheet { showManual = false }
     if (showSearch) GlobalSearchSheet(viewModel) { showSearch = false }
     if (showOutline) OutlineSheet(viewModel) { showOutline = false }
+    if (showProjectSettings) ProjectSettingsSheet(viewModel) { showProjectSettings = false }
     renameTarget?.let { target ->
         RenameDialog(target) { newName ->
             if (newName != null) viewModel.renameGameFile(target, newName)
@@ -284,7 +259,7 @@ fun IdeScreen(
 // ═══════════════════════ 紧凑工具行 ═══════════════════════
 
 /**
- * 顶栏极简：☰ / 当前文件 / ⋮ 菜单（保存·搜索·手册·面板）/ ▶ 构建
+ * 顶栏极简：☰ / 当前文件 / ⋮ 菜单（保存·搜索·手册·项目设置）/ ▶ 构建
  */
 @Composable
 private fun IdeToolbarRow(
@@ -294,10 +269,11 @@ private fun IdeToolbarRow(
     onSave: () -> Unit,
     onManual: () -> Unit,
     onSearch: () -> Unit,
-    onPanelToggle: () -> Unit,
+    onProjectSettings: () -> Unit,
     showTools: Boolean,
     onToggleTools: () -> Unit,
     onOutline: () -> Unit,
+    onBuild: () -> Unit,
 ) {
     var menuOpen by remember { mutableStateOf(false) }
     Surface(color = IdeColors.PanelBg, shadowElevation = 2.dp) {
@@ -362,16 +338,13 @@ private fun IdeToolbarRow(
                     onClick = { menuOpen = false; onManual() },
                 )
                 androidx.compose.material3.DropdownMenuItem(
-                    text = { Text("终端 / 构建面板") },
-                    leadingIcon = { Icon(Icons.Filled.Terminal, null, modifier = Modifier.size(18.dp)) },
-                    onClick = { menuOpen = false; onPanelToggle() },
+                    text = { Text("项目设置（包名/名称/图标/启动图）") },
+                    leadingIcon = { Icon(Icons.Filled.Settings, null, modifier = Modifier.size(18.dp)) },
+                    onClick = { menuOpen = false; onProjectSettings() },
                 )
             }
             Button(
-                onClick = {
-                    viewModel.saveAllTabs()
-                    viewModel.startBuild()
-                },
+                onClick = onBuild,
                 enabled = !viewModel.building,
                 colors = ButtonDefaults.buttonColors(
                     containerColor = if (viewModel.building) IdeColors.OkGreen.copy(alpha = 0.4f) else IdeColors.OkGreen,
@@ -677,433 +650,13 @@ private fun FileRow(node: TreeFile, viewModel: ProjectViewModel, onRename: (Stri
     }
 }
 
-// ═══════════════════════ 底部面板（三档高度 + 把手） ═══════════════════════
-
-@Composable
-private fun BottomPanel(
-    viewModel: ProjectViewModel,
-    tab: Int,
-    onTab: (Int) -> Unit,
-    tall: Boolean,
-    onToggleTall: () -> Unit,
-    onClose: () -> Unit,
-    onInstall: (File) -> Unit,
-) {
-    val targetHeight = if (tall) 480.dp else 300.dp
-    val height by animateDpAsState(targetHeight, tween(220), label = "panelH")
-
-    Surface(
-        color = IdeColors.PanelBg,
-        shadowElevation = 8.dp,
-        shape = RoundedCornerShape(topStart = 16.dp, topEnd = 16.dp),
-    ) {
-        Column(Modifier.fillMaxWidth().height(height)) {
-            // 拖动把手（点击切换 高/矮）
-            Box(
-                Modifier
-                    .fillMaxWidth()
-                    .clickable(onClick = onToggleTall)
-                    .padding(vertical = 6.dp),
-                contentAlignment = Alignment.Center,
-            ) {
-                Box(
-                    Modifier
-                        .width(44.dp)
-                        .height(4.dp)
-                        .background(IdeColors.TextDim.copy(alpha = 0.4f), RoundedCornerShape(2.dp))
-                )
-            }
-            Row(
-                verticalAlignment = Alignment.CenterVertically,
-                modifier = Modifier.height(36.dp).padding(start = 10.dp, end = 4.dp),
-            ) {
-                val tabs = listOf("终端", "构建", "问题", "资源")
-                SingleChoiceSegmentedButtonRow(Modifier.weight(1f).height(30.dp)) {
-                    tabs.forEachIndexed { i, label ->
-                        SegmentedButton(
-                            selected = tab == i,
-                            onClick = { onTab(i) },
-                            shape = SegmentedButtonDefaults.itemShape(i, tabs.size),
-                            label = {
-                                if (i == 2 && viewModel.problems.isNotEmpty()) {
-                                    Text("$label ${viewModel.problems.size}", fontSize = 12.sp)
-                                } else {
-                                    Text(label, fontSize = 12.sp)
-                                }
-                            },
-                        )
-                    }
-                }
-                IconButton(onClick = onClose, modifier = Modifier.size(30.dp)) {
-                    Icon(Icons.Filled.Close, contentDescription = "收起", tint = IdeColors.TextDim, modifier = Modifier.size(16.dp))
-                }
-            }
-            AnimatedContent(
-                targetState = tab,
-                transitionSpec = {
-                    val dir = if (targetState > initialState) 1 else -1
-                    (fadeIn(tween(160)) + slideInHorizontally(tween(200)) { dir * it / 10 }) togetherWith
-                        fadeOut(tween(120))
-                },
-                label = "panelTab",
-            ) { t ->
-                when (t) {
-                    0 -> TerminalConsole(viewModel)
-                    1 -> BuildConsole(viewModel, onInstall)
-                    2 -> ProblemsPane(viewModel)
-                    else -> ResourcePane(viewModel)
-                }
-            }
-        }
-    }
-}
-
-@Composable
-private fun TerminalConsole(viewModel: ProjectViewModel) {
-    val clipboard = LocalClipboardManager.current
-    val listState = rememberLazyListState()
-    LaunchedEffect(viewModel.terminalLines.size) {
-        if (viewModel.terminalLines.isNotEmpty()) listState.scrollToItem(viewModel.terminalLines.size - 1)
-    }
-    Column(Modifier.fillMaxSize()) {
-        LazyColumn(state = listState, modifier = Modifier.weight(1f), contentPadding = PaddingValues(8.dp)) {
-            items(viewModel.terminalLines.toList()) { line ->
-                Text(
-                    line,
-                    color = when {
-                        line.startsWith("renpyforge@") -> IdeColors.OkGreen
-                        line.startsWith("[") -> IdeColors.TextDim
-                        else -> IdeColors.ConsoleFg
-                    },
-                    fontSize = 11.sp, fontFamily = FontFamily.Monospace, lineHeight = 15.sp,
-                )
-            }
-        }
-        Row(
-            verticalAlignment = Alignment.CenterVertically,
-            modifier = Modifier
-                .background(IdeColors.ConsoleBg)
-                .padding(horizontal = 8.dp, vertical = 4.dp),
-        ) {
-            Text("❯", color = IdeColors.OkGreen, fontSize = 13.sp, fontFamily = FontFamily.Monospace)
-            Spacer(Modifier.width(6.dp))
-            androidx.compose.foundation.text.BasicTextField(
-                value = viewModel.terminalInput,
-                onValueChange = { viewModel.terminalInput = it },
-                textStyle = TextStyle(fontFamily = FontFamily.Monospace, fontSize = 13.sp, color = IdeColors.TextFg),
-                cursorBrush = androidx.compose.ui.graphics.SolidColor(IdeColors.Accent),
-                singleLine = true,
-                modifier = Modifier.weight(1f).padding(vertical = 4.dp),
-            )
-            TextButton(
-                onClick = { viewModel.runTerminalCommand(viewModel.terminalInput) },
-                enabled = !viewModel.terminalRunning,
-                contentPadding = PaddingValues(horizontal = 8.dp),
-            ) { Text(if (viewModel.terminalRunning) "…" else "执行", fontSize = 12.sp) }
-            TextButton(
-                onClick = { clipboard.setText(AnnotatedString(viewModel.terminalText())) },
-                contentPadding = PaddingValues(horizontal = 8.dp),
-            ) { Text("复制", fontSize = 12.sp) }
-        }
-    }
-}
-
-@Composable
-private fun BuildConsole(viewModel: ProjectViewModel, onInstall: (File) -> Unit) {
-    val listState = rememberLazyListState()
-    LaunchedEffect(viewModel.console.size) {
-        if (viewModel.console.isNotEmpty()) listState.scrollToItem(viewModel.console.size - 1)
-    }
-    Column(Modifier.fillMaxSize()) {
-        // 配置行
-        Row(
-            verticalAlignment = Alignment.CenterVertically,
-            horizontalArrangement = Arrangement.spacedBy(6.dp),
-            modifier = Modifier
-                .fillMaxWidth()
-                .background(IdeColors.ConsoleBg)
-                .padding(horizontal = 8.dp, vertical = 4.dp),
-        ) {
-            Text("id:", fontSize = 11.sp, color = IdeColors.TextDim)
-            androidx.compose.foundation.text.BasicTextField(
-                value = viewModel.packageName,
-                onValueChange = { viewModel.packageName = it },
-                textStyle = TextStyle(fontFamily = FontFamily.Monospace, fontSize = 11.sp, color = IdeColors.TextFg),
-                cursorBrush = androidx.compose.ui.graphics.SolidColor(IdeColors.Accent),
-                singleLine = true,
-                modifier = Modifier.weight(1.4f).padding(vertical = 4.dp),
-            )
-            Text("名:", fontSize = 11.sp, color = IdeColors.TextDim)
-            androidx.compose.foundation.text.BasicTextField(
-                value = viewModel.appName,
-                onValueChange = { viewModel.appName = it },
-                textStyle = TextStyle(fontSize = 11.sp, color = IdeColors.TextFg),
-                cursorBrush = androidx.compose.ui.graphics.SolidColor(IdeColors.Accent),
-                singleLine = true,
-                modifier = Modifier.weight(1f).padding(vertical = 4.dp),
-            )
-        }
-        // 构建产物
-        AnimatedVisibility(
-            visible = viewModel.builtApk != null,
-            enter = expandVertically(spring()) + fadeIn(),
-            exit = shrinkVertically() + fadeOut(),
-        ) {
-            viewModel.builtApk?.let { apk ->
-                Row(
-                    verticalAlignment = Alignment.CenterVertically,
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .background(IdeColors.AccentDim)
-                        .padding(horizontal = 10.dp, vertical = 6.dp),
-                ) {
-                    Column(Modifier.weight(1f)) {
-                        Text("${apk.name}（${apk.length() / 1024 / 1024} MB）", fontSize = 12.sp, fontWeight = FontWeight.SemiBold)
-                        Text(apk.parent ?: "", fontSize = 10.sp, color = IdeColors.TextDim)
-                    }
-                    Button(
-                        onClick = { onInstall(apk) },
-                        colors = ButtonDefaults.buttonColors(containerColor = IdeColors.OkGreen),
-                        contentPadding = PaddingValues(horizontal = 14.dp),
-                        modifier = Modifier.height(30.dp),
-                    ) {
-                        Icon(Icons.Filled.InstallMobile, contentDescription = null, modifier = Modifier.size(15.dp))
-                        Spacer(Modifier.width(4.dp))
-                        Text("安装", fontSize = 12.sp)
-                    }
-                }
-            }
-        }
-        // 错误
-        viewModel.error?.let {
-            Text(
-                it, color = IdeColors.FailRed, fontSize = 11.sp, fontFamily = FontFamily.Monospace,
-                modifier = Modifier.fillMaxWidth().background(IdeColors.FailRed.copy(alpha = 0.12f)).padding(8.dp),
-            )
-        }
-        // 步骤指示灯
-        if (viewModel.stepStates.any { it.second != StepState.PENDING }) {
-            Row(
-                Modifier
-                    .fillMaxWidth()
-                    .background(IdeColors.ConsoleBg)
-                    .horizontalScroll(rememberScrollState())
-                    .padding(horizontal = 8.dp, vertical = 4.dp),
-                horizontalArrangement = Arrangement.spacedBy(10.dp),
-            ) {
-                viewModel.stepStates.forEach { (id, state) ->
-                    val dotColor by animateColorAsState(
-                        when (state) {
-                            StepState.PENDING -> IdeColors.TextDim.copy(alpha = 0.4f)
-                            StepState.RUNNING -> IdeColors.Accent
-                            StepState.OK -> IdeColors.OkGreen
-                            StepState.FAILED -> IdeColors.FailRed
-                            StepState.SKIPPED -> IdeColors.WarnOrange
-                        },
-                        tween(250), label = "dot",
-                    )
-                    Row(verticalAlignment = Alignment.CenterVertically) {
-                        Box(Modifier.size(7.dp).background(dotColor, CircleShape))
-                        Spacer(Modifier.width(4.dp))
-                        Text(
-                            id.label, fontSize = 10.sp,
-                            color = if (state == StepState.PENDING) IdeColors.TextDim else IdeColors.TextFg,
-                        )
-                    }
-                }
-            }
-        }
-        // 控制台输出
-        LazyColumn(state = listState, modifier = Modifier.weight(1f), contentPadding = PaddingValues(8.dp)) {
-            items(viewModel.console.toList()) { line ->
-                Text(
-                    line,
-                    color = when {
-                        line.startsWith("✘") -> IdeColors.FailRed
-                        line.startsWith("✔") -> IdeColors.OkGreen
-                        line.startsWith("▶") -> IdeColors.Accent
-                        else -> IdeColors.ConsoleFg
-                    },
-                    fontSize = 11.sp, fontFamily = FontFamily.Monospace, lineHeight = 15.sp,
-                )
-            }
-        }
-        // 历史产物
-        AnimatedVisibility(
-            visible = viewModel.buildHistory.isNotEmpty(),
-            enter = expandVertically(spring()) + fadeIn(),
-            exit = shrinkVertically() + fadeOut(),
-        ) {
-            Column(
-                Modifier
-                    .fillMaxWidth()
-                    .background(IdeColors.ConsoleBg)
-                    .padding(horizontal = 10.dp, vertical = 4.dp)
-            ) {
-                Text("历史产物（RenPyForge/output/）", fontSize = 10.sp, color = IdeColors.TextDim)
-                viewModel.buildHistory.take(3).forEach { artifact ->
-                    Row(
-                        verticalAlignment = Alignment.CenterVertically,
-                        modifier = Modifier.fillMaxWidth().padding(vertical = 2.dp),
-                    ) {
-                        Column(Modifier.weight(1f)) {
-                            Text(artifact.file.name, fontSize = 11.sp, fontFamily = FontFamily.Monospace, maxLines = 1, overflow = TextOverflow.Ellipsis)
-                            Text(
-                                "${artifact.sizeMb} MB · " + java.text.SimpleDateFormat("MM-dd HH:mm", java.util.Locale.getDefault()).format(artifact.modified),
-                                fontSize = 9.sp, color = IdeColors.TextDim,
-                            )
-                        }
-                        IconButton(onClick = { viewModel.deleteArtifact(artifact.file) }, modifier = Modifier.size(24.dp)) {
-                            Icon(Icons.Filled.Delete, contentDescription = "删除", tint = IdeColors.FailRed.copy(alpha = 0.6f), modifier = Modifier.size(13.dp))
-                        }
-                        Button(
-                            onClick = { onInstall(artifact.file) },
-                            colors = ButtonDefaults.buttonColors(containerColor = IdeColors.AccentDim, contentColor = IdeColors.TextFg),
-                            contentPadding = PaddingValues(horizontal = 10.dp),
-                            modifier = Modifier.height(24.dp),
-                        ) { Text("安装", fontSize = 10.sp) }
-                    }
-                }
-            }
-        }
-    }
-}
-
-// ═══════════════════════ 问题面板 ═══════════════════════
-
-@Composable
-private fun ProblemsPane(viewModel: ProjectViewModel) {
-    if (viewModel.problems.isEmpty()) {
-        Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
-            Row(verticalAlignment = Alignment.CenterVertically) {
-                Box(Modifier.size(8.dp).background(IdeColors.OkGreen, CircleShape))
-                Spacer(Modifier.width(8.dp))
-                Text("没有发现语法问题", fontSize = 13.sp, color = IdeColors.TextDim)
-            }
-        }
-        return
-    }
-    LazyColumn(Modifier.fillMaxSize(), contentPadding = PaddingValues(8.dp)) {
-        items(viewModel.problems.size, key = { "${viewModel.problems[it].line}-${it}" }) { idx ->
-            val p = viewModel.problems[idx]
-            Row(
-                verticalAlignment = Alignment.CenterVertically,
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .clickable { viewModel.requestJump(p.line, 1) }
-                    .padding(horizontal = 6.dp, vertical = 6.dp),
-            ) {
-                Text(
-                    "Ln ${p.line}",
-                    fontSize = 11.sp,
-                    fontFamily = FontFamily.Monospace,
-                    color = IdeColors.FailRed,
-                    modifier = Modifier.width(56.dp),
-                )
-                Text(p.message, fontSize = 12.sp, color = IdeColors.TextFg)
-            }
-        }
-    }
-}
-
-// ═══════════════════════ 资源浏览器 ═══════════════════════
-
-@Composable
-private fun ResourcePane(viewModel: ProjectViewModel) {
-    val clipboard = LocalClipboardManager.current
-    if (viewModel.resourceImages.isEmpty() && viewModel.resourceAudio.isEmpty()) {
-        Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
-            Text(
-                "暂无资源\n把图片放入 game/images/，音频放入 game/audio/",
-                fontSize = 12.sp, color = IdeColors.TextDim,
-                lineHeight = 18.sp,
-            )
-        }
-        return
-    }
-    LazyColumn(Modifier.fillMaxSize(), contentPadding = PaddingValues(8.dp)) {
-        if (viewModel.resourceImages.isNotEmpty()) {
-            item {
-                Text("图片（点击复制路径）", fontSize = 10.sp, color = IdeColors.TextDim)
-                Spacer(Modifier.height(6.dp))
-            }
-            item {
-                LazyRow(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                    items(viewModel.resourceImages, key = { it.first.absolutePath }) { (f, rel) ->
-                        ImageThumb(f) { clipboard.setText(AnnotatedString(rel)) }
-                    }
-                }
-                Spacer(Modifier.height(10.dp))
-            }
-        }
-        if (viewModel.resourceAudio.isNotEmpty()) {
-            item {
-                Text("音频（点击复制路径）", fontSize = 10.sp, color = IdeColors.TextDim)
-                Spacer(Modifier.height(4.dp))
-            }
-            items(viewModel.resourceAudio, key = { "a" + it.first.absolutePath }) { (f, rel) ->
-                Row(
-                    verticalAlignment = Alignment.CenterVertically,
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .clickable { clipboard.setText(AnnotatedString(rel)) }
-                        .padding(vertical = 4.dp),
-                ) {
-                    Icon(Icons.Filled.Build, contentDescription = null, tint = IdeColors.Accent, modifier = Modifier.size(14.dp))
-                    Spacer(Modifier.width(8.dp))
-                    Text(rel, fontSize = 12.sp, fontFamily = FontFamily.Monospace)
-                }
-            }
-        }
-    }
-}
-
-@Composable
-private fun ImageThumb(f: File, onClick: () -> Unit) {
-    var bmp by remember(f.absolutePath) { mutableStateOf<android.graphics.Bitmap?>(null) }
-    LaunchedEffect(f.absolutePath) {
-        bmp = kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.IO) {
-            try {
-                val opts = android.graphics.BitmapFactory.Options().apply { inSampleSize = 4 }
-                android.graphics.BitmapFactory.decodeFile(f.absolutePath, opts)
-            } catch (_: Exception) { null }
-        }
-    }
-    Column(horizontalAlignment = Alignment.CenterHorizontally, modifier = Modifier.width(76.dp)) {
-        Box(
-            Modifier
-                .size(72.dp)
-                .background(IdeColors.EditorBg, RoundedCornerShape(8.dp))
-                .border(1.dp, IdeColors.PanelBorder, RoundedCornerShape(8.dp))
-                .clickable(onClick = onClick),
-            contentAlignment = Alignment.Center,
-        ) {
-            val b = bmp
-            if (b != null) {
-                Image(bitmap = b.asImageBitmap(), contentDescription = f.name, modifier = Modifier.size(72.dp))
-            } else {
-                Text("…", color = IdeColors.TextDim, fontSize = 16.sp)
-            }
-        }
-        Text(
-            f.name,
-            fontSize = 9.sp,
-            color = IdeColors.TextDim,
-            maxLines = 1,
-            overflow = TextOverflow.Ellipsis,
-            modifier = Modifier.width(76.dp),
-        )
-    }
-}
-
 // ═══════════════════════ 状态栏 ═══════════════════════
 
 @Composable
 private fun StatusBar(
     viewModel: ProjectViewModel,
-    panelOpen: Boolean,
+    onOpenTerminal: () -> Unit,
     onOpenProblems: () -> Unit,
-    onTogglePanel: () -> Unit,
 ) {
     Surface(color = IdeColors.PanelBg) {
         Row(
@@ -1113,12 +666,12 @@ private fun StatusBar(
                 .height(28.dp)
                 .padding(start = 0.dp, end = 10.dp),
         ) {
-            // 终端/构建面板开关
-            IconButton(onClick = onTogglePanel, modifier = Modifier.size(30.dp)) {
+            // 打开独立终端页（不在工具栏，属于控制台页）
+            IconButton(onClick = onOpenTerminal, modifier = Modifier.size(30.dp)) {
                 Icon(
                     Icons.Filled.Terminal,
-                    contentDescription = "终端面板",
-                    tint = if (panelOpen) IdeColors.Accent else IdeColors.TextDim,
+                    contentDescription = "终端",
+                    tint = IdeColors.TextDim,
                     modifier = Modifier.size(16.dp),
                 )
             }
@@ -1132,7 +685,7 @@ private fun StatusBar(
                 "Ln ${viewModel.cursorLine}, Col ${viewModel.cursorCol}",
                 fontSize = 10.sp, color = IdeColors.TextDim, fontFamily = FontFamily.Monospace,
             )
-            if (viewModel.problems.isNotEmpty() && !panelOpen) {
+            if (viewModel.problems.isNotEmpty()) {
                 Spacer(Modifier.width(10.dp))
                 Row(
                     verticalAlignment = Alignment.CenterVertically,
