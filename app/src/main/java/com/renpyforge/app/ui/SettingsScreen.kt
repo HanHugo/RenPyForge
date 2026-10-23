@@ -33,6 +33,7 @@ import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
+import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
@@ -42,6 +43,7 @@ import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.renpyforge.app.BuildConfig
+import com.renpyforge.app.privilege.PrivilegeManager
 import com.renpyforge.app.project.AppStorage
 
 /**
@@ -97,6 +99,57 @@ fun SettingsScreen(
                 if (!viewModel.storageGranted) {
                     Spacer(Modifier.height(10.dp))
                     Button(onClick = onRequestStorage) { Text("去授权") }
+                }
+            }
+        }
+
+        // —— 高级权限 ——
+        item {
+            SettingsCard("高级权限（可选）") {
+                Text(
+                    "用于终端提权与构建产物静默安装；不授权也不影响 IDE 与构建。",
+                    fontSize = 11.sp, color = IdeColors.TextDim,
+                )
+                Spacer(Modifier.height(8.dp))
+                PrivilegeRow(
+                    name = "Root",
+                    available = PrivilegeManager.rootAvailable,
+                    detail = if (PrivilegeManager.rootAvailable) {
+                        "已检测到 su，可静默安装、以 root 执行终端命令"
+                    } else {
+                        "未检测到 su（设备未 Root 或未授予 root 权限）"
+                    },
+                )
+                Spacer(Modifier.height(6.dp))
+                PrivilegeRow(
+                    name = "Shizuku",
+                    available = PrivilegeManager.shizukuAuthorized,
+                    detail = when {
+                        !PrivilegeManager.shizukuInstalled -> "未安装 Shizuku（moe.shizuku.privileged.api）"
+                        !PrivilegeManager.shizukuRunning -> "Shizuku 已安装但服务未运行，请先打开 Shizuku 启动服务"
+                        PrivilegeManager.shizukuAuthorized -> "已授权，可静默安装、以 shell 身份执行命令"
+                        else -> "Shizuku 运行中，尚未授权"
+                    },
+                )
+                Spacer(Modifier.height(10.dp))
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    if (PrivilegeManager.shizukuInstalled && !PrivilegeManager.shizukuAuthorized) {
+                        Button(onClick = {
+                            val activity = context as? android.app.Activity
+                            if (activity == null) {
+                                viewModel.toast("无法申请权限")
+                            } else {
+                                val err = PrivilegeManager.requestShizuku(activity)
+                                viewModel.toast(err ?: "已弹出 Shizuku 授权请求")
+                                PrivilegeManager.refresh(context)
+                            }
+                        }) { Text("申请 Shizuku 授权") }
+                        Spacer(Modifier.width(8.dp))
+                    }
+                    TextButton(onClick = {
+                        PrivilegeManager.refresh(context)
+                        viewModel.toast("权限状态已刷新")
+                    }) { Text("刷新状态", fontSize = 12.sp) }
                 }
             }
         }
@@ -172,6 +225,27 @@ fun SettingsScreen(
                     fontSize = 11.sp, color = IdeColors.TextDim.copy(alpha = 0.8f),
                 )
             }
+        }
+    }
+}
+
+@Composable
+private fun PrivilegeRow(name: String, available: Boolean, detail: String) {
+    Row(verticalAlignment = Alignment.CenterVertically) {
+        Icon(
+            if (available) Icons.Filled.CheckCircle else Icons.Filled.Warning,
+            contentDescription = null,
+            tint = if (available) IdeColors.OkGreen else IdeColors.WarnOrange,
+            modifier = Modifier.size(16.dp),
+        )
+        Spacer(Modifier.width(6.dp))
+        Column {
+            Text(
+                "$name · " + if (available) "可用" else "不可用",
+                fontSize = 13.sp,
+                fontWeight = FontWeight.Medium,
+            )
+            Text(detail, fontSize = 11.sp, color = IdeColors.TextDim)
         }
     }
 }

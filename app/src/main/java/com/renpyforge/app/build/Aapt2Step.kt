@@ -3,7 +3,6 @@ package com.renpyforge.app.build
 import android.graphics.Bitmap
 import android.graphics.BitmapFactory
 import android.graphics.Canvas
-import android.graphics.Color
 import android.graphics.Paint
 import android.graphics.RectF
 import java.io.File
@@ -59,17 +58,9 @@ object Aapt2Step {
         File(resDir, "values").mkdirs()
         File(resDir, "values/strings.xml").writeText(strings)
 
-        val presplash = File(work, "renpy-presplash.jpg")
-        ctx.assets.open("templates/renpy-presplash.jpg").use { input ->
-            presplash.outputStream().use { input.copyTo(it) }
-        }
-        // drawable 目录（presplash 作为 drawable 供运行时使用）
-        File(resDir, "drawable").mkdirs()
-        presplash.copyTo(File(resDir, "drawable/renpy_presplash.jpg"), overwrite = true)
-
-        // 自定义图标 / 启动图（覆盖模板资源）
+        // 自定义图标（覆盖模板 mipmap）
+        // 注：启动图不在这里处理——它由 BuildPipeline 写入 assets/android-presplash.jpg
         config.iconFile?.let { applyCustomIcon(resDir, it, log) }
-        config.splashFile?.let { applyCustomSplash(resDir, it, log) }
 
         // 2) 渲染 manifest（注入 package 属性 + 配置项）
         val manifestTemplate = ctx.assets.open("templates/AndroidManifest.template")
@@ -155,28 +146,6 @@ object Aapt2Step {
             log.appendLine("已应用自定义图标（512×512）")
         } catch (e: Exception) {
             log.appendLine("应用自定义图标失败：${e.message}")
-        }
-    }
-
-    /** 自定义启动图：合成白底后写入 renpy_presplash.jpg（透明 PNG 不会变黑） */
-    private fun applyCustomSplash(resDir: File, src: File, log: StringBuilder) {
-        try {
-            if (!src.isFile) return
-            val bmp = BitmapFactory.decodeFile(src.absolutePath) ?: run {
-                log.appendLine("启动图解码失败，沿用默认启动图")
-                return
-            }
-            val out = Bitmap.createBitmap(bmp.width, bmp.height, Bitmap.Config.ARGB_8888)
-            val canvas = Canvas(out)
-            canvas.drawColor(Color.WHITE)
-            canvas.drawBitmap(bmp, 0f, 0f, null)
-            File(resDir, "drawable").mkdirs()
-            File(resDir, "drawable/renpy_presplash.jpg").outputStream().use {
-                out.compress(Bitmap.CompressFormat.JPEG, 92, it)
-            }
-            log.appendLine("已应用自定义启动图（${bmp.width}×${bmp.height}）")
-        } catch (e: Exception) {
-            log.appendLine("应用自定义启动图失败：${e.message}")
         }
     }
 }

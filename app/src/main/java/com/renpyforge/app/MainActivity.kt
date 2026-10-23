@@ -38,7 +38,7 @@ import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalContext
-import com.renpyforge.app.build.BuildPipeline
+import com.renpyforge.app.privilege.PrivilegeManager
 import com.renpyforge.app.ui.ConsoleScreen
 import com.renpyforge.app.ui.IdeColors
 import com.renpyforge.app.ui.IdeScreen
@@ -46,7 +46,6 @@ import com.renpyforge.app.ui.IdeTheme
 import com.renpyforge.app.ui.ProjectViewModel
 import com.renpyforge.app.ui.SettingsScreen
 import com.renpyforge.app.ui.WelcomeScreen
-import java.io.File
 
 class MainActivity : ComponentActivity() {
 
@@ -55,6 +54,7 @@ class MainActivity : ComponentActivity() {
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         viewModel = ProjectViewModel(this)
+        PrivilegeManager.refresh(this)
 
         setContent {
             IdeTheme {
@@ -67,6 +67,7 @@ class MainActivity : ComponentActivity() {
     override fun onResume() {
         super.onResume()
         viewModel.onStorageMaybeChanged()
+        PrivilegeManager.refresh(this)
     }
 
     /**
@@ -101,7 +102,8 @@ class MainActivity : ComponentActivity() {
         Scaffold(
             containerColor = IdeColors.AppBg,
             bottomBar = {
-                if (consoleTab == null) {
+                // 只有首页（项目列表）与设置页显示底栏；IDE 内不显示
+                if (consoleTab == null && viewModel.currentProject == null) {
                     NavigationBar(containerColor = IdeColors.PanelBg) {
                         NavigationBarItem(
                             selected = section == 0,
@@ -138,22 +140,16 @@ class MainActivity : ComponentActivity() {
                             viewModel = viewModel,
                             initialTab = tab,
                             onClose = { consoleTab = null },
-                            onInstall = { file: File -> BuildPipeline.install(this@MainActivity, file) },
+                        )
+                    } else if (viewModel.currentProject != null) {
+                        IdeScreen(
+                            viewModel = viewModel,
+                            onOpenConsole = { consoleTab = it },
                         )
                     } else if (section == 1) {
                         SettingsScreen(
                             viewModel = viewModel,
                             onRequestStorage = { requestStorageAccess() },
-                        )
-                    } else if (viewModel.currentProject != null) {
-                        IdeScreen(
-                            viewModel = viewModel,
-                            onBuild = {
-                                viewModel.saveAllTabs()
-                                consoleTab = 0
-                                viewModel.startBuild()
-                            },
-                            onOpenConsole = { consoleTab = it },
                         )
                     } else {
                         WelcomeScreen(

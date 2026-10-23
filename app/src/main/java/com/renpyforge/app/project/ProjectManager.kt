@@ -75,6 +75,14 @@ class ProjectManager(private val context: Context) {
         f.writeText(content)
     }
 
+    /** 把外部文件（图片 / 音频）写入 game/ 下的相对路径 */
+    fun writeBinary(name: String, relPath: String, input: java.io.InputStream): File {
+        val f = safeFile(name, relPath) ?: throw IllegalArgumentException("非法路径：$relPath")
+        f.parentFile?.mkdirs()
+        f.outputStream().use { input.copyTo(it) }
+        return f
+    }
+
     fun createFile(name: String, relPath: String): Boolean {
         val f = safeFile(name, relPath) ?: return false
         if (f.exists()) return false

@@ -2,16 +2,12 @@
 
 package com.renpyforge.app.ui
 
+import android.app.Activity
 import androidx.compose.animation.AnimatedContent
-import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.animation.animateColorAsState
-import androidx.compose.animation.core.animateFloatAsState
-import androidx.compose.animation.core.spring
 import androidx.compose.animation.core.tween
-import androidx.compose.animation.expandVertically
 import androidx.compose.animation.fadeIn
 import androidx.compose.animation.fadeOut
-import androidx.compose.animation.shrinkVertically
 import androidx.compose.animation.togetherWith
 import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
@@ -43,7 +39,6 @@ import androidx.compose.material.icons.filled.Delete
 import androidx.compose.material.icons.filled.InstallMobile
 import androidx.compose.material.icons.filled.PlayArrow
 import androidx.compose.material.icons.filled.Settings
-import androidx.compose.material.icons.filled.Terminal
 import androidx.compose.material3.AssistChip
 import androidx.compose.material3.Button
 import androidx.compose.material3.ButtonDefaults
@@ -51,7 +46,6 @@ import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.LinearProgressIndicator
-import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Scaffold
 import androidx.compose.material3.SegmentedButton
 import androidx.compose.material3.SegmentedButtonDefaults
@@ -72,6 +66,7 @@ import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.asImageBitmap
 import androidx.compose.ui.platform.LocalClipboardManager
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.AnnotatedString
 import androidx.compose.ui.text.TextStyle
 import androidx.compose.ui.text.font.FontFamily
@@ -79,30 +74,27 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
-import com.renpyforge.app.build.StepId
 import com.renpyforge.app.build.StepState
+import com.renpyforge.app.privilege.PrivilegeManager
+import com.renpyforge.app.privilege.ShellMode
 import java.io.File
 
-private val consoleTabs = listOf("构建", "终端", "问题", "资源")
+private val consoleTabs = listOf("构建", "终端")
 
 /**
- * 独立控制台页（从 IDE 工具栏分离）：构建 / 终端 / 问题 / 资源四个页签。
- * 构建开始时自动切入本页第一条页签。
+ * 独立控制台页（从 IDE 工具栏分离）：只保留「构建」「终端」两个页签。
+ * 资源与问题已并入 IDE 侧栏 / 底部面板；构建不再自动触发，需在此页手动开始。
  */
 @Composable
 fun ConsoleScreen(
     viewModel: ProjectViewModel,
     initialTab: Int,
     onClose: () -> Unit,
-    onInstall: (File) -> Unit,
 ) {
     var tab by remember { mutableIntStateOf(initialTab.coerceIn(0, consoleTabs.size - 1)) }
     var showSettings by remember { mutableStateOf(false) }
 
-    LaunchedEffect(Unit) {
-        viewModel.refreshBuildHistory()
-        viewModel.refreshResources()
-    }
+    LaunchedEffect(Unit) { viewModel.refreshBuildHistory() }
 
     Scaffold(
         containerColor = IdeColors.AppBg,
@@ -133,12 +125,7 @@ fun ConsoleScreen(
                             selected = tab == i,
                             onClick = { tab = i },
                             shape = SegmentedButtonDefaults.itemShape(i, consoleTabs.size),
-                            label = {
-                                Text(
-                                    if (i == 2 && viewModel.problems.isNotEmpty()) "$label ${viewModel.problems.size}" else label,
-                                    fontSize = 12.sp,
-                                )
-                            },
+                            label = { Text(label, fontSize = 12.sp) },
                         )
                     }
                 }
@@ -152,10 +139,12 @@ fun ConsoleScreen(
                 modifier = Modifier.weight(1f),
             ) { t ->
                 when (t) {
-                    0 -> BuildPane(viewModel, onInstall, onOpenSettings = { showSettings = true })
-                    1 -> TerminalPane(viewModel)
-                    2 -> ProblemsPane(viewModel)
-                    else -> ResourcePane(viewModel)
+                    0 -> BuildPane(
+                        viewModel = viewModel,
+                        onInstall = { viewModel.install(it) },
+                        onOpenSettings = { showSettings = true },
+                    )
+                    else -> TerminalPane(viewModel)
                 }
             }
         }
@@ -207,14 +196,6 @@ private fun ConsoleTopBar(
                     )
                     Spacer(Modifier.width(4.dp))
                     Text(if (viewModel.building) "构建中" else if (viewModel.builtApk != null) "重新构建" else "开始构建", fontSize = 12.sp)
-                }
-            } else {
-                IconButton(onClick = onBuild, enabled = !viewModel.building) {
-                    Icon(
-                        Icons.Filled.PlayArrow, contentDescription = "构建",
-                        tint = if (viewModel.building) IdeColors.TextDim else IdeColors.OkGreen,
-                        modifier = Modifier.size(22.dp),
-                    )
                 }
             }
         }
@@ -494,17 +475,70 @@ private fun BuildHistoryCard(viewModel: ProjectViewModel, onInstall: (File) -> U
 @Composable
 private fun TerminalPane(viewModel: ProjectViewModel) {
     val clipboard = LocalClipboardManager.current
+    val context = LocalContext.current
     val listState = rememberLazyListState()
     LaunchedEffect(viewModel.terminalLines.size) {
         if (viewModel.terminalLines.isNotEmpty()) listState.scrollToItem(viewModel.terminalLines.size - 1)
     }
+
     Column(Modifier.fillMaxSize().background(IdeColors.ConsoleBg)) {
+        // 执行通道：本机 / Root / Shizuku
+        Surface(color = IdeColors.PanelBg) {
+            Column(Modifier.fillMaxWidth().padding(horizontal = 8.dp, vertical = 6.dp)) {
+                SingleChoiceSegmentedButtonRow(Modifier.fillMaxWidth()) {
+                    ShellMode.entries.forEachIndexed { i, mode ->
+                        val enabled = when (mode) {
+                            ShellMode.NORMAL -> true
+                            ShellMode.ROOT -> PrivilegeManager.rootAvailable
+                            ShellMode.SHIZUKU -> PrivilegeManager.shizukuInstalled
+                        }
+                        SegmentedButton(
+                            selected = viewModel.shellMode == mode,
+                            onClick = { viewModel.shellMode = mode },
+                            enabled = enabled,
+                            shape = SegmentedButtonDefaults.itemShape(i, ShellMode.entries.size),
+                            label = { Text(mode.label, fontSize = 11.sp) },
+                        )
+                    }
+                }
+                val hint = when (viewModel.shellMode) {
+                    ShellMode.NORMAL -> "以本应用身份执行；内置 aapt2 / zipalign / renpycompile 已在 PATH 中"
+                    ShellMode.ROOT -> if (PrivilegeManager.rootAvailable) "以 root 身份执行命令" else "未检测到 su，设备未 Root"
+                    ShellMode.SHIZUKU -> when {
+                        !PrivilegeManager.shizukuInstalled -> "未安装 Shizuku"
+                        PrivilegeManager.shizukuAuthorized -> "以 shell 身份执行命令"
+                        else -> "Shizuku 未授权"
+                    }
+                }
+                Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.padding(top = 4.dp)) {
+                    Text(hint, fontSize = 10.sp, color = IdeColors.TextDim, modifier = Modifier.weight(1f))
+                    if (viewModel.shellMode == ShellMode.SHIZUKU && !PrivilegeManager.shizukuAuthorized) {
+                        TextButton(
+                            onClick = {
+                                val activity = context as? Activity
+                                if (activity == null) {
+                                    viewModel.toast("无法申请权限")
+                                } else {
+                                    val err = PrivilegeManager.requestShizuku(activity)
+                                    viewModel.toast(err ?: "已弹出授权请求")
+                                }
+                            },
+                            contentPadding = PaddingValues(horizontal = 8.dp),
+                        ) { Text("申请授权", fontSize = 11.sp) }
+                    }
+                }
+            }
+        }
+        HorizontalDivider(color = IdeColors.PanelBorder)
+
         LazyColumn(state = listState, modifier = Modifier.weight(1f), contentPadding = PaddingValues(10.dp)) {
             items(viewModel.terminalLines.toList()) { line ->
                 Text(
                     line,
                     color = when {
                         line.startsWith("renpyforge@") -> IdeColors.OkGreen
+                        line.startsWith("root@") -> IdeColors.WarnOrange
+                        line.startsWith("shell(shizuku)@") -> IdeColors.Accent
                         line.startsWith("[") -> IdeColors.TextDim
                         else -> IdeColors.ConsoleFg
                     },
@@ -554,132 +588,5 @@ private fun TerminalPane(viewModel: ProjectViewModel) {
                 ) { Text("清屏", fontSize = 12.sp) }
             }
         }
-    }
-}
-
-// ═══════════════════════ 问题页 ═══════════════════════
-
-@Composable
-private fun ProblemsPane(viewModel: ProjectViewModel) {
-    if (viewModel.problems.isEmpty()) {
-        Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
-            Row(verticalAlignment = Alignment.CenterVertically) {
-                Box(Modifier.size(8.dp).background(IdeColors.OkGreen, CircleShape))
-                Spacer(Modifier.width(8.dp))
-                Text("没有发现语法问题", fontSize = 13.sp, color = IdeColors.TextDim)
-            }
-        }
-        return
-    }
-    LazyColumn(Modifier.fillMaxSize(), contentPadding = PaddingValues(8.dp)) {
-        items(viewModel.problems.size, key = { "${viewModel.problems[it].line}-${it}" }) { idx ->
-            val p = viewModel.problems[idx]
-            Row(
-                verticalAlignment = Alignment.CenterVertically,
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .clickable { viewModel.requestJump(p.line, 1) }
-                    .padding(horizontal = 6.dp, vertical = 6.dp),
-            ) {
-                Text(
-                    "Ln ${p.line}",
-                    fontSize = 11.sp,
-                    fontFamily = FontFamily.Monospace,
-                    color = IdeColors.FailRed,
-                    modifier = Modifier.width(56.dp),
-                )
-                Text(p.message, fontSize = 12.sp, color = IdeColors.TextFg)
-            }
-        }
-    }
-}
-
-// ═══════════════════════ 资源页 ═══════════════════════
-
-@Composable
-private fun ResourcePane(viewModel: ProjectViewModel) {
-    val clipboard = LocalClipboardManager.current
-    if (viewModel.resourceImages.isEmpty() && viewModel.resourceAudio.isEmpty()) {
-        Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
-            Text(
-                "暂无资源\n把图片放入 game/images/，音频放入 game/audio/",
-                fontSize = 12.sp, color = IdeColors.TextDim,
-                lineHeight = 18.sp,
-            )
-        }
-        return
-    }
-    LazyColumn(Modifier.fillMaxSize(), contentPadding = PaddingValues(8.dp)) {
-        if (viewModel.resourceImages.isNotEmpty()) {
-            item {
-                Text("图片（点击复制路径）", fontSize = 10.sp, color = IdeColors.TextDim)
-                Spacer(Modifier.height(6.dp))
-            }
-            item {
-                LazyRow(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                    items(viewModel.resourceImages, key = { it.first.absolutePath }) { (f, rel) ->
-                        ImageThumb(f) { clipboard.setText(AnnotatedString(rel)) }
-                    }
-                }
-                Spacer(Modifier.height(10.dp))
-            }
-        }
-        if (viewModel.resourceAudio.isNotEmpty()) {
-            item {
-                Text("音频（点击复制路径）", fontSize = 10.sp, color = IdeColors.TextDim)
-                Spacer(Modifier.height(4.dp))
-            }
-            items(viewModel.resourceAudio, key = { "a" + it.first.absolutePath }) { (f, rel) ->
-                Row(
-                    verticalAlignment = Alignment.CenterVertically,
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .clickable { clipboard.setText(AnnotatedString(rel)) }
-                        .padding(vertical = 4.dp),
-                ) {
-                    Icon(Icons.Filled.Terminal, contentDescription = null, tint = IdeColors.Accent, modifier = Modifier.size(14.dp))
-                    Spacer(Modifier.width(8.dp))
-                    Text(rel, fontSize = 12.sp, fontFamily = FontFamily.Monospace)
-                }
-            }
-        }
-    }
-}
-
-@Composable
-private fun ImageThumb(f: File, onClick: () -> Unit) {
-    var bmp by remember(f.absolutePath) { mutableStateOf<android.graphics.Bitmap?>(null) }
-    LaunchedEffect(f.absolutePath) {
-        bmp = kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.IO) {
-            try {
-                val opts = android.graphics.BitmapFactory.Options().apply { inSampleSize = 4 }
-                android.graphics.BitmapFactory.decodeFile(f.absolutePath, opts)
-            } catch (_: Exception) { null }
-        }
-    }
-    Column(horizontalAlignment = Alignment.CenterHorizontally, modifier = Modifier.width(76.dp)) {
-        Box(
-            Modifier
-                .size(72.dp)
-                .background(IdeColors.EditorBg, RoundedCornerShape(8.dp))
-                .border(1.dp, IdeColors.PanelBorder, RoundedCornerShape(8.dp))
-                .clickable(onClick = onClick),
-            contentAlignment = Alignment.Center,
-        ) {
-            val b = bmp
-            if (b != null) {
-                Image(bitmap = b.asImageBitmap(), contentDescription = f.name, modifier = Modifier.size(72.dp))
-            } else {
-                Text("…", color = IdeColors.TextDim, fontSize = 16.sp)
-            }
-        }
-        Text(
-            f.name,
-            fontSize = 9.sp,
-            color = IdeColors.TextDim,
-            maxLines = 1,
-            overflow = TextOverflow.Ellipsis,
-            modifier = Modifier.width(76.dp),
-        )
     }
 }

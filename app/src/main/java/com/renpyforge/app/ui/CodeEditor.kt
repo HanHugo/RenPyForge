@@ -9,7 +9,9 @@ import androidx.compose.animation.shrinkVertically
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
-import androidx.compose.foundation.gestures.detectTransformGestures
+import androidx.compose.foundation.gestures.awaitEachGesture
+import androidx.compose.foundation.gestures.awaitFirstDown
+import androidx.compose.foundation.gestures.calculateZoom
 import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
@@ -29,11 +31,11 @@ import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
-import androidx.compose.runtime.mutableFloatStateOf
 import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
+import androidx.compose.runtime.rememberUpdatedState
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.SolidColor
@@ -69,17 +71,19 @@ fun CodeEditor(
     showTools: Boolean,
     jumpLine: Int = 0,
     onJumpConsumed: () -> Unit = {},
+    fontScale: Float = 1f,
+    onFontScaleChange: (Float) -> Unit = {},
     modifier: Modifier = Modifier,
 ) {
     var value by remember(path) { mutableStateOf(TextFieldValue(content)) }
     var curLine by remember(path) { mutableIntStateOf(1) }
-    var fontScale by remember { mutableFloatStateOf(1f) }
     var showFind by remember { mutableStateOf(false) }
     var findQuery by remember { mutableStateOf("") }
     var findIdx by remember { mutableIntStateOf(0) }
     var showInsert by remember { mutableStateOf(false) }
     var suggestions by remember { mutableStateOf<List<String>>(emptyList()) }
     var suggestPrefixLen by remember { mutableIntStateOf(0) }
+    val latestScale by rememberUpdatedState(fontScale)
 
     // 补全候选池：内置关键字 + 当前文件里定义的符号
     fun symbolWords(text: String): List<String> {
@@ -248,6 +252,14 @@ fun CodeEditor(
                 EditorAction("↷ 重做", enabled = redoStack.isNotEmpty()) { redo() }
                 EditorAction(if (showFind) "收起查找" else "查找") { showFind = !showFind }
                 EditorAction("插入代码") { showInsert = !showInsert }
+                EditorAction("A−") { onFontScaleChange(fontScale / 1.15f) }
+                EditorAction("A+") { onFontScaleChange(fontScale * 1.15f) }
+                Text(
+                    "${(fontScale * 100).toInt()}%",
+                    fontSize = 11.sp,
+                    color = IdeColors.TextDim,
+                    modifier = Modifier.padding(horizontal = 6.dp),
+                )
             }
         }
         // 插入代码菜单（横滑选择）
@@ -318,8 +330,22 @@ fun CodeEditor(
             Modifier
                 .weight(1f)
                 .pointerInput(Unit) {
-                    detectTransformGestures { _, _, zoom, _ ->
-                        fontScale = (fontScale * zoom).coerceIn(0.5f, 2.5f)
+                    // 只在双指时接管手势，单指拖动继续用于滚动
+                    awaitEachGesture {
+                        awaitFirstDown(requireUnconsumed = false)
+                        var scale = latestScale
+                        var event: androidx.compose.ui.input.pointer.PointerEvent
+                        do {
+                            event = awaitPointerEvent()
+                            if (event.changes.size >= 2) {
+                                val zoom = event.calculateZoom()
+                                if (zoom != 1f) {
+                                    scale = (scale * zoom).coerceIn(0.6f, 2.4f)
+                                    onFontScaleChange(scale)
+                                    event.changes.forEach { it.consume() }
+                                }
+                            }
+                        } while (event.changes.any { it.pressed })
                     }
                 }
         ) {

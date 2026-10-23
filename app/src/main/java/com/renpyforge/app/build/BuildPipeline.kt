@@ -182,6 +182,17 @@ class BuildPipeline(
         }
         log(StepId.ASSEMBLE, "private.mp3：${privateTar.length() / 1024} KB")
 
+        // 启动图：运行时只认 assets/android-presplash.jpg，自定义图片必须在组装前替换它
+        val presplashFile = File(outputDir, "android-presplash.jpg")
+        val customSplash = config.splashFile?.takeIf { it.isFile }
+        val presplash = if (customSplash != null && PresplashPrep.prepare(customSplash, presplashFile)) {
+            log(StepId.ASSEMBLE, "已应用自定义启动图（${customSplash.name}）")
+            presplashFile
+        } else {
+            if (customSplash != null) log(StepId.ASSEMBLE, "启动图处理失败，沿用默认启动图")
+            toolchain.presplashFile()
+        }
+
         val unsigned = File(outputDir, "unsigned.apk")
         val aligned = File(outputDir, "aligned.apk")
         ApkAssembler.assemble(
@@ -192,7 +203,7 @@ class BuildPipeline(
                 gameDir = gameDir,
                 commonDir = commonDir,
                 privateTar = privateTar,
-                presplash = toolchain.presplashFile(),
+                presplash = presplash,
                 downloading = toolchain.downloadingFile(),
             ),
             unsigned,

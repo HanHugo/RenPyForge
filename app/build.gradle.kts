@@ -12,8 +12,8 @@ android {
         applicationId = "com.renpyforge.app"
         minSdk = 26
         targetSdk = 34
-        versionCode = 34
-        versionName = "1.4.0"
+        versionCode = 35
+        versionName = "1.5.0"
     }
 
     signingConfigs {
@@ -86,4 +86,8 @@ dependencies {
     // 自签名证书生成（X509v3CertificateBuilder）+ PKCS12 keystore 写入
     implementation("org.bouncycastle:bcprov-jdk18on:1.78.1")
     implementation("org.bouncycastle:bcpkix-jdk18on:1.78.1")
+
+    // Shizuku（可选提权：shell 身份执行命令 / 静默安装）
+    // 使用本地 jar，避免构建时联网拉取依赖
+    implementation(files("libs/shizuku-api.jar", "libs/shizuku-provider.jar"))
 }

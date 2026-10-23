@@ -2,6 +2,8 @@ package com.renpyforge.app.ui
 
 import android.content.Context
 import android.net.Uri
+import android.provider.OpenableColumns
+import android.widget.Toast
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateListOf
 import androidx.compose.runtime.mutableStateOf
@@ -10,6 +12,8 @@ import com.renpyforge.app.build.BuildConfig
 import com.renpyforge.app.build.BuildPipeline
 import com.renpyforge.app.build.StepId
 import com.renpyforge.app.build.StepState
+import com.renpyforge.app.privilege.PrivilegeManager
+import com.renpyforge.app.privilege.ShellMode
 import com.renpyforge.app.project.AppStorage
 import com.renpyforge.app.project.ProjectConfig
 import com.renpyforge.app.project.ProjectManager
@@ -64,6 +68,14 @@ class ProjectViewModel(private val context: Context) {
         private set
     var cursorCol by mutableStateOf(1)
         private set
+
+    /** 编辑器字号缩放（双指或菜单调整） */
+    var editorFontScale by mutableStateOf(1f)
+        private set
+
+    fun changeEditorFontScale(scale: Float) {
+        editorFontScale = scale.coerceIn(0.6f, 2.4f)
+    }
 
     private val tabContents = HashMap<String, String>()
 
@@ -174,6 +186,7 @@ class ProjectViewModel(private val context: Context) {
     var terminalRunning by mutableStateOf(false)
         private set
     var terminalInput by mutableStateOf("")
+    var shellMode by mutableStateOf(ShellMode.NORMAL)
 
     // —— 构建 ——
     var packageName by mutableStateOf("org.renpy.forge.game")
@@ -299,6 +312,87 @@ class ProjectViewModel(private val context: Context) {
         val project = currentProject ?: return null
         val rel = if (kind == "icon") projectConfig?.iconFile else projectConfig?.splashFile
         return rel?.let { File(projects.projectDir(project), it) }?.takeIf { it.isFile }
+    }
+
+    /** 导入图片 / 音频到 game/images 或 game/audio（kind = "image" / "audio"） */
+    fun importGameAsset(kind: String, uri: Uri) {
+        val project = currentProject ?: return
+        scope.launch(Dispatchers.IO) {
+            try {
+                val dir = if (kind == "audio") "audio" else "images"
+                val name = importFileName(uri, if (kind == "audio") "audio" else "image")
+                val input = context.contentResolver.openInputStream(uri)
+                    ?: throw IllegalStateException("无法读取所选文件")
+                val rel = "$dir/${uniqueGameName(project, dir, name)}"
+                projects.writeBinary(project, rel, input)
+                withContext(Dispatchers.Main) {
+                    gameFiles = projects.listGameFiles(project)
+                    refreshResources()
+                    toast("已导入 $rel")
+                }
+            } catch (e: Exception) {
+                withContext(Dispatchers.Main) { toast("导入失败：${e.message}") }
+            }
+        }
+    }
+
+    /** 读取 content:// 的展示文件名，并按 MIME 补齐扩展名 */
+    private fun importFileName(uri: Uri, fallbackBase: String): String {
+        var name = runCatching {
+            context.contentResolver.query(uri, arrayOf(OpenableColumns.DISPLAY_NAME), null, null, null)
+                ?.use { c -> if (c.moveToFirst()) c.getString(0) else null }
+        }.getOrNull()
+        if (name.isNullOrBlank()) name = "${fallbackBase}_${System.currentTimeMillis()}"
+        name = name.replace(Regex("""[\\/:*?"<>|]"""), "_")
+        if (!name.contains('.')) {
+            val mime = runCatching { context.contentResolver.getType(uri) }.getOrNull()
+            val ext = mime?.let { android.webkit.MimeTypeMap.getSingleton().getExtensionFromMimeType(it) }
+            if (!ext.isNullOrBlank()) name = "$name.$ext"
+        }
+        return name
+    }
+
+    /** 同名文件自动追加 -1、-2… */
+    private fun uniqueGameName(project: String, dir: String, name: String): String {
+        val baseDir = File(projects.gameDir(project), dir)
+        if (!File(baseDir, name).exists()) return name
+        val dot = name.lastIndexOf('.')
+        val stem = if (dot > 0) name.substring(0, dot) else name
+        val ext = if (dot > 0) name.substring(dot) else ""
+        var i = 1
+        while (true) {
+            val candidate = "$stem-$i$ext"
+            if (!File(baseDir, candidate).exists()) return candidate
+            i++
+        }
+    }
+
+    fun toast(message: String) {
+        Toast.makeText(context, message, Toast.LENGTH_SHORT).show()
+    }
+
+    // —— 安装 ——
+
+    /**
+     * 安装 APK：有 Root / Shizuku 时静默安装，否则回落到系统安装器。
+     */
+    fun install(file: File) {
+        if (!PrivilegeManager.canElevate) {
+            com.renpyforge.app.build.BuildPipeline.install(context, file)
+            toast("已打开系统安装器")
+            return
+        }
+        scope.launch(Dispatchers.IO) {
+            val err = PrivilegeManager.installApk(file.absolutePath)
+            withContext(Dispatchers.Main) {
+                if (err == null) {
+                    toast("已静默安装 ${file.name}")
+                } else {
+                    toast("静默安装失败，改用系统安装器")
+                    com.renpyforge.app.build.BuildPipeline.install(context, file)
+                }
+            }
+        }
     }
 
     // —— 编辑器 ——
@@ -452,27 +546,26 @@ class ProjectViewModel(private val context: Context) {
     fun runTerminalCommand(raw: String) {
         val cmd = raw.trim()
         if (cmd.isEmpty() || terminalRunning) return
+        val mode = shellMode
+        if (mode == ShellMode.ROOT && !PrivilegeManager.rootAvailable) {
+            terminalLines.add("[错误] 未检测到 Root（su）")
+            return
+        }
+        if (mode == ShellMode.SHIZUKU && !PrivilegeManager.shizukuAuthorized) {
+            terminalLines.add("[错误] 未获得 Shizuku 授权，请到「设置 → 高级权限」申请")
+            return
+        }
+        val cwd = terminalCwd()
         terminalRunning = true
-        terminalLines.add("renpyforge@device:${terminalCwd().path}$ $cmd")
+        terminalLines.add("${promptPrefix(mode)}${cwd.path} $ $cmd")
         terminalInput = ""
         scope.launch(Dispatchers.IO) {
             try {
-                val pb = ProcessBuilder("sh", "-c", cmd)
-                pb.directory(terminalCwd())
-                val env = pb.environment()
-                // 把内置工具目录加入 PATH，用户可直接敲 aapt2/zipalign 等（lib*.so 形式的绝对路径也可用）
-                val tools = context.applicationInfo.nativeLibraryDir
-                env["PATH"] = "$tools:/system/bin:/system/xbin:/vendor/bin"
-                env["HOME"] = AppStorage.forgeRoot(context).absolutePath
-                env["TERM"] = "dumb"
-                env["LANG"] = "en_US.UTF-8"
-                env["TMPDIR"] = context.cacheDir.absolutePath
-                pb.redirectErrorStream(true)
-                val p = pb.start()
-                p.inputStream.bufferedReader().useLines { lines ->
-                    for (line in lines) terminalLines.add(line)
+                val code = if (mode == ShellMode.NORMAL) {
+                    normalExec(cmd, cwd) { terminalLines.add(it) }
+                } else {
+                    PrivilegeManager.runCommand(cmd, mode, cwd) { terminalLines.add(it) }
                 }
-                val code = p.waitFor()
                 terminalLines.add(if (code == 0) "[退出码 0]" else "[退出码 $code]")
             } catch (e: Exception) {
                 terminalLines.add("[错误] ${e.message}")
@@ -481,6 +574,29 @@ class ProjectViewModel(private val context: Context) {
             }
         }
         if (terminalLines.size > 4000) terminalLines.removeRange(0, 1000)
+    }
+
+    private fun promptPrefix(mode: ShellMode): String = when (mode) {
+        ShellMode.NORMAL -> "renpyforge@device:"
+        ShellMode.ROOT -> "root@device:"
+        ShellMode.SHIZUKU -> "shell(shizuku)@device:"
+    }
+
+    private fun normalExec(cmd: String, cwd: File, onLine: (String) -> Unit): Int {
+        val pb = ProcessBuilder("sh", "-c", cmd)
+        pb.directory(cwd)
+        val env = pb.environment()
+        // 把内置工具目录加入 PATH，用户可直接敲 aapt2/zipalign 等
+        val tools = context.applicationInfo.nativeLibraryDir
+        env["PATH"] = "$tools:/system/bin:/system/xbin:/vendor/bin"
+        env["HOME"] = AppStorage.forgeRoot(context).absolutePath
+        env["TERM"] = "dumb"
+        env["LANG"] = "en_US.UTF-8"
+        env["TMPDIR"] = context.cacheDir.absolutePath
+        pb.redirectErrorStream(true)
+        val p = pb.start()
+        p.inputStream.bufferedReader().useLines { lines -> lines.forEach(onLine) }
+        return p.waitFor()
     }
 
     private fun terminalCwd(): File {

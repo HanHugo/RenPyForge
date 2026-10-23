@@ -1,32 +1,35 @@
-@file:OptIn(androidx.compose.material3.ExperimentalMaterial3Api::class)
+@file:OptIn(
+    androidx.compose.material3.ExperimentalMaterial3Api::class,
+    androidx.compose.foundation.ExperimentalFoundationApi::class,
+)
 
 package com.renpyforge.app.ui
 
+import androidx.activity.compose.rememberLauncherForActivityResult
+import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.animation.AnimatedContent
 import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.animation.animateColorAsState
-import androidx.compose.animation.core.animateDpAsState
 import androidx.compose.animation.core.animateFloatAsState
 import androidx.compose.animation.core.spring
 import androidx.compose.animation.core.tween
+import androidx.compose.animation.expandHorizontally
 import androidx.compose.animation.expandVertically
 import androidx.compose.animation.fadeIn
 import androidx.compose.animation.fadeOut
+import androidx.compose.animation.shrinkHorizontally
 import androidx.compose.animation.shrinkVertically
 import androidx.compose.animation.slideInHorizontally
-import androidx.compose.animation.slideInVertically
-import androidx.compose.animation.slideOutHorizontally
-import androidx.compose.animation.slideOutVertically
 import androidx.compose.animation.togetherWith
 import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.combinedClickable
+import androidx.compose.foundation.gestures.detectDragGestures
 import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
-import androidx.compose.foundation.layout.BoxWithConstraints
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
@@ -35,48 +38,48 @@ import androidx.compose.foundation.layout.fillMaxHeight
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.LazyColumn
-import androidx.compose.foundation.lazy.LazyRow
-import androidx.compose.foundation.lazy.items
-import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.MenuBook
 import androidx.compose.material.icons.filled.Add
+import androidx.compose.material.icons.filled.AddPhotoAlternate
+import androidx.compose.material.icons.filled.AudioFile
 import androidx.compose.material.icons.filled.Build
+import androidx.compose.material.icons.filled.CheckCircle
 import androidx.compose.material.icons.filled.Close
 import androidx.compose.material.icons.filled.Delete
 import androidx.compose.material.icons.filled.Folder
 import androidx.compose.material.icons.filled.Home
-import androidx.compose.material.icons.filled.InstallMobile
-import androidx.compose.material.icons.filled.List
+import androidx.compose.material.icons.filled.Image
 import androidx.compose.material.icons.filled.Menu
 import androidx.compose.material.icons.filled.MoreVert
 import androidx.compose.material.icons.filled.PlayArrow
 import androidx.compose.material.icons.filled.RadioButtonUnchecked
-import androidx.compose.material.icons.filled.CheckCircle
 import androidx.compose.material.icons.filled.Save
 import androidx.compose.material.icons.filled.Search
 import androidx.compose.material.icons.filled.Settings
 import androidx.compose.material.icons.filled.Terminal
+import androidx.compose.material.icons.filled.WarningAmber
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Button
 import androidx.compose.material3.ButtonDefaults
-import androidx.compose.material3.DrawerValue
+import androidx.compose.material3.DropdownMenu
+import androidx.compose.material3.DropdownMenuItem
 import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.LinearProgressIndicator
-import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.ModalBottomSheet
-import androidx.compose.material3.ModalDrawerSheet
-import androidx.compose.material3.ModalNavigationDrawer
 import androidx.compose.material3.OutlinedTextField
+import androidx.compose.material3.Scaffold
+import androidx.compose.material3.ScaffoldDefaults
 import androidx.compose.material3.ScrollableTabRow
 import androidx.compose.material3.SegmentedButton
 import androidx.compose.material3.SegmentedButtonDefaults
@@ -85,7 +88,6 @@ import androidx.compose.material3.Surface
 import androidx.compose.material3.Tab
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
-import androidx.compose.material3.rememberDrawerState
 import androidx.compose.material3.rememberModalBottomSheetState
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
@@ -94,42 +96,54 @@ import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
+import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.clip
 import androidx.compose.ui.draw.rotate
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.asImageBitmap
+import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.platform.LocalClipboardManager
+import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.text.AnnotatedString
-import androidx.compose.ui.text.TextStyle
 import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
-import com.renpyforge.app.build.StepId
-import com.renpyforge.app.build.StepState
-import kotlinx.coroutines.launch
 import java.io.File
 
-// ═══════════════════════ IDE 主界面（响应式 IDE 布局） ═══════════════════════
+private enum class SidebarTab(val label: String) { FILES("文件"), ASSETS("资源") }
+
+/** 可在编辑器里打开的文本类文件扩展名 */
+private val EDITABLE_EXT = setOf(
+    "rpy", "rpym", "py", "txt", "md", "json", "xml", "css", "js", "html", "ini", "cfg",
+)
+
+private fun isEditableFile(path: String): Boolean {
+    val name = path.substringAfterLast('/')
+    if (!name.contains('.')) return true
+    return name.substringAfterLast('.').lowercase() in EDITABLE_EXT
+}
+
+// ═══════════════════════ IDE 主界面 ═══════════════════════
 
 /**
- * 真·IDE 布局：
- * · 宽屏（≥640dp）：文件树常驻左栏，与编辑器左右分栏（桌面 IDE 形态）
- * · 窄屏：文件树走 MD3 抽屉（边缘手势可拉出）
- * · 紧凑单行工具条（无大标题栏），标签行紧贴编辑器
- * · 构建台 / 终端是独立全屏页面（由根导航承载），不占用编辑区
+ * IDE 布局：
+ * ┌ 顶栏（文件 / ⋮ 菜单 / 构建台入口）
+ * ├ 可拖拽侧栏（文件树 · 资源）+ 可缩放宽度
+ * │   编辑器（标签 + 代码 + 双指缩放）
+ * │   问题面板（可折叠，来自状态栏）
+ * └ 状态栏
+ * 进入 IDE 不显示主导航底栏。
  */
 @Composable
 fun IdeScreen(
     viewModel: ProjectViewModel,
-    onBuild: () -> Unit,
     onOpenConsole: (Int) -> Unit,
 ) {
-    val drawerState = rememberDrawerState(DrawerValue.Closed)
-    val scope = rememberCoroutineScope()
     var showNewFile by remember { mutableStateOf(false) }
     var showManual by remember { mutableStateOf(false) }
     var showSearch by remember { mutableStateOf(false) }
@@ -137,109 +151,141 @@ fun IdeScreen(
     var showOutline by remember { mutableStateOf(false) }
     var showProjectSettings by remember { mutableStateOf(false) }
     var renameTarget by remember { mutableStateOf<String?>(null) }
+    var showProblems by remember { mutableStateOf(false) }
+    var sidebarOpen by rememberSaveable { mutableStateOf(true) }
+    var sidebarWidth by rememberSaveable { mutableStateOf(132f) }
+    var sidebarTab by rememberSaveable { mutableStateOf(SidebarTab.FILES) }
+
+    val density = LocalDensity.current
+    val clipboard = LocalClipboardManager.current
+
+    val imagePicker = rememberLauncherForActivityResult(ActivityResultContracts.GetContent()) { uri ->
+        uri?.let { viewModel.importGameAsset("image", it) }
+    }
+    val audioPicker = rememberLauncherForActivityResult(ActivityResultContracts.GetContent()) { uri ->
+        uri?.let { viewModel.importGameAsset("audio", it) }
+    }
 
     LaunchedEffect(viewModel.activeTab) {
         if (viewModel.activeTab != null) viewModel.refreshProblems()
     }
 
-    BoxWithConstraints(Modifier.fillMaxSize().background(IdeColors.AppBg)) {
-        val wide = maxWidth >= 640.dp
-
-        val treeContent: @Composable () -> Unit = {
-            FileTreePanel(
+    Scaffold(
+        containerColor = IdeColors.AppBg,
+        contentWindowInsets = ScaffoldDefaults.contentWindowInsets,
+    ) { padding ->
+        Column(
+            Modifier
+                .fillMaxSize()
+                .padding(padding)
+        ) {
+            IdeTopBar(
                 viewModel = viewModel,
-                onClose = if (wide) ({ }) else ({ scope.launch { drawerState.close() } }),
-                showClose = !wide,
-                onNewFile = { showNewFile = true },
-                onCloseProject = { viewModel.closeProject() },
-                onRename = { renameTarget = it },
+                onMenu = { sidebarOpen = !sidebarOpen },
+                onSave = { viewModel.saveAllTabs() },
+                onManual = { showManual = true },
+                onSearch = { showSearch = true },
+                onProjectSettings = { showProjectSettings = true },
+                showTools = showTools,
+                onToggleTools = { showTools = !showTools },
+                onOutline = { showOutline = true },
+                onImportImage = { imagePicker.launch("image/*") },
+                onImportAudio = { audioPicker.launch("audio/*") },
+                onBuild = { viewModel.saveAllTabs(); onOpenConsole(0) },
             )
-        }
 
-        val ideBody: @Composable () -> Unit = {
-            Column(Modifier.fillMaxSize()) {
-                // —— 紧凑工具行 ——
-                IdeToolbarRow(
-                    viewModel = viewModel,
-                    showMenu = !wide,
-                    onMenu = { scope.launch { drawerState.open() } },
-                    onSave = { viewModel.saveAllTabs() },
-                    onManual = { showManual = true },
-                    onSearch = { showSearch = true },
-                    onProjectSettings = { showProjectSettings = true },
-                    showTools = showTools,
-                    onToggleTools = { showTools = !showTools },
-                    onOutline = { showOutline = true },
-                    onBuild = onBuild,
+            AnimatedVisibility(
+                visible = viewModel.building,
+                enter = expandVertically(tween(180)),
+                exit = shrinkVertically(tween(180)),
+            ) {
+                LinearProgressIndicator(
+                    modifier = Modifier.fillMaxWidth().height(2.dp),
+                    color = IdeColors.OkGreen,
+                    trackColor = IdeColors.PanelBg,
                 )
-                // 构建中的细进度条
+            }
+
+            Row(Modifier.fillMaxWidth().weight(1f)) {
                 AnimatedVisibility(
-                    visible = viewModel.building,
-                    enter = expandVertically(tween(180)),
-                    exit = shrinkVertically(tween(180)),
+                    visible = sidebarOpen,
+                    enter = expandHorizontally(tween(180)) + fadeIn(tween(160)),
+                    exit = shrinkHorizontally(tween(160)) + fadeOut(tween(120)),
                 ) {
-                    LinearProgressIndicator(
-                        modifier = Modifier.fillMaxWidth().height(2.dp),
-                        color = IdeColors.OkGreen,
-                        trackColor = IdeColors.PanelBg,
-                    )
-                }
-
-                // —— 编辑器标签行 ——
-                EditorTabs(viewModel, onNewFile = { showNewFile = true })
-
-                // —— 编辑区 ——
-                Box(Modifier.weight(1f)) {
-                    AnimatedContent(
-                        targetState = viewModel.activeTab,
-                        transitionSpec = {
-                            (fadeIn(tween(180)) + slideInHorizontally(tween(220)) { it / 12 }) togetherWith
-                                fadeOut(tween(120))
-                        },
-                        label = "editor",
-                    ) { path ->
-                        if (path == null) {
-                            EditorEmptyState(onNewFile = { showNewFile = true })
-                        } else {
-                            CodeEditor(
-                                path = path,
-                                content = viewModel.activeContent,
-                                onContentChange = { viewModel.onEditorChange(it) },
-                                onCursorMoved = { l, c -> viewModel.onCursorMoved(l, c) },
-                                showTools = showTools,
-                                jumpLine = viewModel.jumpRequest?.first ?: 0,
-                                onJumpConsumed = { viewModel.consumeJump() },
-                                modifier = Modifier.fillMaxSize(),
-                            )
-                        }
+                    Row(Modifier.fillMaxHeight()) {
+                        SidebarPanel(
+                            viewModel = viewModel,
+                            tab = sidebarTab,
+                            onTabChange = { sidebarTab = it },
+                            width = sidebarWidth,
+                            onClose = { sidebarOpen = false },
+                            onNewFile = { showNewFile = true },
+                            onRename = { renameTarget = it },
+                            onCloseProject = { viewModel.closeProject() },
+                            onPickImage = { imagePicker.launch("image/*") },
+                            onPickAudio = { audioPicker.launch("audio/*") },
+                            onCopyPath = { rel ->
+                                clipboard.setText(AnnotatedString(rel))
+                                viewModel.toast("已复制 $rel")
+                            },
+                        )
+                        ResizeHandle(
+                            onDrag = { deltaPx ->
+                                val deltaDp = deltaPx / density.density
+                                sidebarWidth = (sidebarWidth + deltaDp).coerceIn(96f, 260f)
+                            },
+                        )
                     }
                 }
 
-                StatusBar(
-                    viewModel = viewModel,
-                    onOpenTerminal = { onOpenConsole(1) },
-                    onOpenProblems = { onOpenConsole(2) },
-                )
+                Column(Modifier.fillMaxHeight().weight(1f)) {
+                    EditorTabs(viewModel, onNewFile = { showNewFile = true })
+                    Box(Modifier.weight(1f)) {
+                        AnimatedContent(
+                            targetState = viewModel.activeTab,
+                            transitionSpec = {
+                                (fadeIn(tween(160)) + slideInHorizontally(tween(200)) { it / 14 }) togetherWith
+                                    fadeOut(tween(120))
+                            },
+                            label = "editor",
+                        ) { path ->
+                            if (path == null) {
+                                EditorEmptyState(onNewFile = { showNewFile = true })
+                            } else {
+                                CodeEditor(
+                                    path = path,
+                                    content = viewModel.activeContent,
+                                    onContentChange = { viewModel.onEditorChange(it) },
+                                    onCursorMoved = { l, c -> viewModel.onCursorMoved(l, c) },
+                                    showTools = showTools,
+                                    jumpLine = viewModel.jumpRequest?.first ?: 0,
+                                    onJumpConsumed = { viewModel.consumeJump() },
+                                    fontScale = viewModel.editorFontScale,
+                                    onFontScaleChange = { viewModel.changeEditorFontScale(it) },
+                                    modifier = Modifier.fillMaxSize(),
+                                )
+                            }
+                        }
+                    }
+                    AnimatedVisibility(
+                        visible = showProblems,
+                        enter = expandVertically(tween(180)) + fadeIn(),
+                        exit = shrinkVertically(tween(160)) + fadeOut(),
+                    ) {
+                        ProblemsPanel(
+                            viewModel = viewModel,
+                            onClose = { showProblems = false },
+                        )
+                    }
+                    StatusBar(
+                        viewModel = viewModel,
+                        problemsOpen = showProblems,
+                        onToggleProblems = { showProblems = !showProblems },
+                        onOpenTerminal = { onOpenConsole(1) },
+                        onOpenBuild = { viewModel.saveAllTabs(); onOpenConsole(0) },
+                    )
+                }
             }
-        }
-
-        if (wide) {
-            // ── 桌面 IDE 形态：文件树常驻左栏 ──
-            Row(Modifier.fillMaxSize()) {
-                Box(Modifier.width(250.dp).fillMaxHeight()) { treeContent() }
-                Box(Modifier.weight(1f).fillMaxHeight()) { ideBody() }
-            }
-        } else {
-            // ── 手机形态：抽屉文件树 ──
-            ModalNavigationDrawer(
-                drawerState = drawerState,
-                drawerContent = {
-                    ModalDrawerSheet(
-                        drawerContainerColor = IdeColors.PanelBg,
-                        windowInsets = androidx.compose.foundation.layout.WindowInsets(0, 0, 0, 0),
-                    ) { treeContent() }
-                },
-            ) { ideBody() }
         }
     }
 
@@ -256,15 +302,11 @@ fun IdeScreen(
     }
 }
 
-// ═══════════════════════ 紧凑工具行 ═══════════════════════
+// ═══════════════════════ 顶栏 ═══════════════════════
 
-/**
- * 顶栏极简：☰ / 当前文件 / ⋮ 菜单（保存·搜索·手册·项目设置）/ ▶ 构建
- */
 @Composable
-private fun IdeToolbarRow(
+private fun IdeTopBar(
     viewModel: ProjectViewModel,
-    showMenu: Boolean,
     onMenu: () -> Unit,
     onSave: () -> Unit,
     onManual: () -> Unit,
@@ -273,101 +315,330 @@ private fun IdeToolbarRow(
     showTools: Boolean,
     onToggleTools: () -> Unit,
     onOutline: () -> Unit,
+    onImportImage: () -> Unit,
+    onImportAudio: () -> Unit,
     onBuild: () -> Unit,
 ) {
     var menuOpen by remember { mutableStateOf(false) }
     Surface(color = IdeColors.PanelBg, shadowElevation = 2.dp) {
         Row(
             verticalAlignment = Alignment.CenterVertically,
-            modifier = Modifier.fillMaxWidth().height(48.dp).padding(start = 2.dp, end = 6.dp),
+            modifier = Modifier.fillMaxWidth().height(46.dp).padding(start = 2.dp, end = 6.dp),
         ) {
-            if (showMenu) {
-                IconButton(onClick = onMenu) {
-                    Icon(Icons.Filled.Menu, contentDescription = "文件树", modifier = Modifier.size(22.dp))
-                }
+            IconButton(onClick = onMenu, modifier = Modifier.size(40.dp)) {
+                Icon(Icons.Filled.Menu, contentDescription = "侧栏", modifier = Modifier.size(20.dp))
             }
             Column(Modifier.weight(1f)) {
                 Text(
-                    viewModel.activeTab?.substringAfterLast('/') ?: "无打开文件",
-                    fontWeight = FontWeight.SemiBold, fontSize = 15.sp,
+                    viewModel.activeTab?.substringAfterLast('/') ?: "未打开文件",
+                    fontWeight = FontWeight.SemiBold, fontSize = 14.sp,
                     maxLines = 1, overflow = TextOverflow.Ellipsis,
                 )
                 Text(
-                    viewModel.currentProject ?: "",
+                    (viewModel.currentProject ?: "") + " · game/",
                     fontSize = 10.sp, color = IdeColors.TextDim,
                     maxLines = 1, overflow = TextOverflow.Ellipsis,
                 )
             }
-            IconButton(onClick = { menuOpen = true }) {
-                Icon(Icons.Filled.MoreVert, contentDescription = "更多", modifier = Modifier.size(22.dp))
+            IconButton(onClick = onBuild, modifier = Modifier.size(36.dp)) {
+                Icon(Icons.Filled.Build, contentDescription = "构建台", tint = IdeColors.OkGreen, modifier = Modifier.size(20.dp))
             }
-            androidx.compose.material3.DropdownMenu(
-                expanded = menuOpen,
-                onDismissRequest = { menuOpen = false },
-                containerColor = IdeColors.PanelBg,
-            ) {
-                androidx.compose.material3.DropdownMenuItem(
-                    text = { Text("脚本大纲") },
-                    leadingIcon = { Icon(Icons.Filled.List, null, modifier = Modifier.size(18.dp)) },
-                    onClick = { menuOpen = false; onOutline() },
-                )
-                androidx.compose.material3.DropdownMenuItem(
-                    text = { Text("编辑工具（撤销/查找/插入）") },
-                    leadingIcon = {
-                        Icon(
-                            if (showTools) Icons.Filled.CheckCircle else Icons.Filled.RadioButtonUnchecked,
-                            null, tint = if (showTools) IdeColors.Accent else IdeColors.TextDim,
-                            modifier = Modifier.size(18.dp),
-                        )
-                    },
-                    onClick = { menuOpen = false; onToggleTools() },
-                )
-                androidx.compose.material3.DropdownMenuItem(
-                    text = { Text("全部保存" + if (viewModel.dirtyTabs.isNotEmpty()) "（${viewModel.dirtyTabs.size} 个未保存）" else "") },
-                    leadingIcon = { Icon(Icons.Filled.Save, null, tint = IdeColors.WarnOrange, modifier = Modifier.size(18.dp)) },
-                    onClick = { menuOpen = false; onSave() },
-                )
-                androidx.compose.material3.DropdownMenuItem(
-                    text = { Text("全局搜索") },
-                    leadingIcon = { Icon(Icons.Filled.Search, null, modifier = Modifier.size(18.dp)) },
-                    onClick = { menuOpen = false; onSearch() },
-                )
-                androidx.compose.material3.DropdownMenuItem(
-                    text = { Text("代码手册") },
-                    leadingIcon = { Icon(Icons.AutoMirrored.Filled.MenuBook, null, modifier = Modifier.size(18.dp)) },
-                    onClick = { menuOpen = false; onManual() },
-                )
-                androidx.compose.material3.DropdownMenuItem(
-                    text = { Text("项目设置（包名/名称/图标/启动图）") },
-                    leadingIcon = { Icon(Icons.Filled.Settings, null, modifier = Modifier.size(18.dp)) },
-                    onClick = { menuOpen = false; onProjectSettings() },
-                )
-            }
-            Button(
-                onClick = onBuild,
-                enabled = !viewModel.building,
-                colors = ButtonDefaults.buttonColors(
-                    containerColor = if (viewModel.building) IdeColors.OkGreen.copy(alpha = 0.4f) else IdeColors.OkGreen,
-                    contentColor = Color.White,
-                ),
-                contentPadding = PaddingValues(horizontal = 14.dp, vertical = 6.dp),
-                modifier = Modifier.height(32.dp),
-            ) {
-                Icon(
-                    if (viewModel.building) Icons.Filled.Build else Icons.Filled.PlayArrow,
-                    contentDescription = null, modifier = Modifier.size(15.dp),
-                )
-                Spacer(Modifier.width(4.dp))
-                Text(if (viewModel.building) "构建中" else "构建", fontSize = 13.sp)
+            Box {
+                IconButton(onClick = { menuOpen = true }, modifier = Modifier.size(36.dp)) {
+                    Icon(Icons.Filled.MoreVert, contentDescription = "更多", modifier = Modifier.size(20.dp))
+                }
+                DropdownMenu(
+                    expanded = menuOpen,
+                    onDismissRequest = { menuOpen = false },
+                    containerColor = IdeColors.PanelBg,
+                ) {
+                    MenuRow("脚本大纲") { menuOpen = false; onOutline() }
+                    MenuRow("编辑工具（撤销/查找/缩放/插入）", checked = showTools) {
+                        menuOpen = false; onToggleTools()
+                    }
+                    MenuRow("全部保存" + if (viewModel.dirtyTabs.isNotEmpty()) "（${viewModel.dirtyTabs.size} 未保存）" else "") {
+                        menuOpen = false; onSave()
+                    }
+                    MenuRow("全局搜索") { menuOpen = false; onSearch() }
+                    MenuRow("代码手册") { menuOpen = false; onManual() }
+                    HorizontalDivider(color = IdeColors.PanelBorder)
+                    MenuRow("导入图片到 images/") { menuOpen = false; onImportImage() }
+                    MenuRow("导入音频到 audio/") { menuOpen = false; onImportAudio() }
+                    HorizontalDivider(color = IdeColors.PanelBorder)
+                    MenuRow("项目设置（包名/名称/图标/启动图）") { menuOpen = false; onProjectSettings() }
+                }
             }
         }
     }
 }
 
+@Composable
+private fun MenuRow(
+    text: String,
+    checked: Boolean? = null,
+    onClick: () -> Unit,
+) {
+    DropdownMenuItem(
+        text = { Text(text, fontSize = 13.sp) },
+        leadingIcon = if (checked != null) {
+            {
+                Icon(
+                    if (checked) Icons.Filled.CheckCircle else Icons.Filled.RadioButtonUnchecked,
+                    contentDescription = null,
+                    tint = if (checked) IdeColors.Accent else IdeColors.TextDim,
+                    modifier = Modifier.size(16.dp),
+                )
+            }
+        } else null,
+        onClick = onClick,
+    )
+}
+
+// ═══════════════════════ 侧栏（文件 / 资源） ═══════════════════════
+
+@Composable
+private fun SidebarPanel(
+    viewModel: ProjectViewModel,
+    tab: SidebarTab,
+    onTabChange: (SidebarTab) -> Unit,
+    width: Float,
+    onClose: () -> Unit,
+    onNewFile: () -> Unit,
+    onRename: (String) -> Unit,
+    onCloseProject: () -> Unit,
+    onPickImage: () -> Unit,
+    onPickAudio: () -> Unit,
+    onCopyPath: (String) -> Unit,
+) {
+    Surface(color = IdeColors.PanelBg, modifier = Modifier.width(width.dp).fillMaxHeight()) {
+        Column(Modifier.fillMaxSize()) {
+            Row(
+                verticalAlignment = Alignment.CenterVertically,
+                modifier = Modifier.fillMaxWidth().height(36.dp).padding(horizontal = 6.dp),
+            ) {
+                SidebarTab.entries.forEach { t ->
+                    val active = tab == t
+                    Text(
+                        t.label,
+                        fontSize = 12.sp,
+                        fontWeight = if (active) FontWeight.SemiBold else FontWeight.Normal,
+                        color = if (active) IdeColors.Accent else IdeColors.TextDim,
+                        modifier = Modifier
+                            .clip(RoundedCornerShape(6.dp))
+                            .background(if (active) IdeColors.AccentDim else Color.Transparent)
+                            .clickable { onTabChange(t) }
+                            .padding(horizontal = 8.dp, vertical = 4.dp),
+                    )
+                    Spacer(Modifier.width(4.dp))
+                }
+                Spacer(Modifier.weight(1f))
+                IconButton(onClick = onClose, modifier = Modifier.size(26.dp)) {
+                    Icon(Icons.Filled.Close, contentDescription = "收起侧栏", tint = IdeColors.TextDim, modifier = Modifier.size(15.dp))
+                }
+            }
+            HorizontalDivider(color = IdeColors.PanelBorder)
+
+            when (tab) {
+                SidebarTab.FILES -> {
+                    Row(
+                        verticalAlignment = Alignment.CenterVertically,
+                        modifier = Modifier.fillMaxWidth().padding(start = 8.dp, end = 2.dp, top = 4.dp),
+                    ) {
+                        Text(
+                            "game/",
+                            fontFamily = FontFamily.Monospace,
+                            fontSize = 11.sp,
+                            color = IdeColors.WarnOrange,
+                            modifier = Modifier.weight(1f),
+                        )
+                        IconButton(onClick = onNewFile, modifier = Modifier.size(26.dp)) {
+                            Icon(Icons.Filled.Add, contentDescription = "新建文件", modifier = Modifier.size(15.dp))
+                        }
+                    }
+                    FileTreeList(viewModel, onRename)
+                    HorizontalDivider(color = IdeColors.PanelBorder)
+                    Row(
+                        verticalAlignment = Alignment.CenterVertically,
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .clickable(onClick = onCloseProject)
+                            .padding(horizontal = 8.dp, vertical = 8.dp),
+                    ) {
+                        Icon(Icons.Filled.Home, contentDescription = null, tint = IdeColors.TextDim, modifier = Modifier.size(14.dp))
+                        Spacer(Modifier.width(6.dp))
+                        Text("关闭项目", fontSize = 11.sp, color = IdeColors.TextDim)
+                    }
+                }
+
+                SidebarTab.ASSETS -> {
+                    ResourceList(viewModel, onPickImage, onPickAudio, onCopyPath)
+                }
+            }
+        }
+    }
+}
+
+@Composable
+private fun ResizeHandle(onDrag: (Float) -> Unit) {
+    Box(
+        modifier = Modifier
+            .fillMaxHeight()
+            .width(10.dp)
+            .pointerInput(Unit) {
+                detectDragGestures { change, dragAmount ->
+                    change.consume()
+                    onDrag(dragAmount.x)
+                }
+            },
+        contentAlignment = Alignment.Center,
+    ) {
+        Box(
+            Modifier
+                .width(2.dp)
+                .fillMaxHeight(0.3f)
+                .background(IdeColors.PanelBorder)
+        )
+    }
+}
+
+@Composable
+private fun ResourceList(
+    viewModel: ProjectViewModel,
+    onPickImage: () -> Unit,
+    onPickAudio: () -> Unit,
+    onCopyPath: (String) -> Unit,
+) {
+    val images = viewModel.resourceImages
+    val audio = viewModel.resourceAudio
+
+    LazyColumn(
+        Modifier.fillMaxSize(),
+        contentPadding = PaddingValues(vertical = 4.dp),
+    ) {
+        item {
+            Row(
+                verticalAlignment = Alignment.CenterVertically,
+                modifier = Modifier.fillMaxWidth().padding(horizontal = 4.dp, vertical = 2.dp),
+            ) {
+                AssetAction("＋图片", Icons.Filled.Image, onPickImage)
+                AssetAction("＋音频", Icons.Filled.AudioFile, onPickAudio)
+            }
+            HorizontalDivider(color = IdeColors.PanelBorder)
+        }
+        item { SectionLabel("图片 ${images.size}") }
+        if (images.isEmpty()) {
+            item { HintText("放入 game/images/ 后自动出现") }
+        } else {
+            items(images.size, key = { "img" + images[it].first.absolutePath }) { idx ->
+                val (file, rel) = images[idx]
+                AssetRow(file, rel, isImage = true, onClick = { onCopyPath(rel) })
+            }
+        }
+        item { SectionLabel("音频 ${audio.size}") }
+        if (audio.isEmpty()) {
+            item { HintText("放入 game/audio/ 后自动出现") }
+        } else {
+            items(audio.size, key = { "aud" + audio[it].first.absolutePath }) { idx ->
+                val (_, rel) = audio[idx]
+                AssetRow(null, rel, isImage = false, onClick = { onCopyPath(rel) })
+            }
+        }
+    }
+}
+
+@Composable
+private fun AssetAction(label: String, icon: androidx.compose.ui.graphics.vector.ImageVector, onClick: () -> Unit) {
+    Row(
+        verticalAlignment = Alignment.CenterVertically,
+        modifier = Modifier
+            .clip(RoundedCornerShape(6.dp))
+            .clickable(onClick = onClick)
+            .padding(horizontal = 5.dp, vertical = 6.dp),
+    ) {
+        Icon(icon, contentDescription = null, tint = IdeColors.Accent, modifier = Modifier.size(13.dp))
+        Spacer(Modifier.width(3.dp))
+        Text(label, fontSize = 10.sp, color = IdeColors.Accent)
+    }
+}
+
+@Composable
+private fun SectionLabel(text: String) {
+    Text(
+        text,
+        fontSize = 10.sp,
+        color = IdeColors.TextDim,
+        modifier = Modifier.padding(start = 8.dp, top = 8.dp, bottom = 3.dp),
+    )
+}
+
+@Composable
+private fun HintText(text: String) {
+    Text(
+        text,
+        fontSize = 10.sp,
+        color = IdeColors.TextDim.copy(alpha = 0.7f),
+        modifier = Modifier.padding(horizontal = 8.dp, vertical = 3.dp),
+    )
+}
+
+@Composable
+private fun AssetRow(file: File?, rel: String, isImage: Boolean, onClick: () -> Unit) {
+    var bitmap by remember(file?.absolutePath) { mutableStateOf<android.graphics.Bitmap?>(null) }
+    LaunchedEffect(file?.absolutePath) {
+        bitmap = if (file != null) {
+            kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.IO) {
+                runCatching {
+                    val opts = android.graphics.BitmapFactory.Options().apply { inSampleSize = 4 }
+                    android.graphics.BitmapFactory.decodeFile(file.absolutePath, opts)
+                }.getOrNull()
+            }
+        } else null
+    }
+
+    Row(
+        verticalAlignment = Alignment.CenterVertically,
+        modifier = Modifier
+            .fillMaxWidth()
+            .clickable(onClick = onClick)
+            .padding(horizontal = 6.dp, vertical = 4.dp),
+    ) {
+        Box(
+            Modifier
+                .size(28.dp)
+                .clip(RoundedCornerShape(5.dp))
+                .background(IdeColors.HoverBg),
+            contentAlignment = Alignment.Center,
+        ) {
+            if (isImage && bitmap != null) {
+                Image(
+                    bitmap = bitmap!!.asImageBitmap(),
+                    contentDescription = null,
+                    modifier = Modifier.size(28.dp).clip(RoundedCornerShape(5.dp)),
+                )
+            } else {
+                Icon(
+                    if (isImage) Icons.Filled.Image else Icons.Filled.AudioFile,
+                    contentDescription = null,
+                    tint = if (isImage) IdeColors.WarnOrange else IdeColors.Accent,
+                    modifier = Modifier.size(15.dp),
+                )
+            }
+        }
+        Spacer(Modifier.width(6.dp))
+        Text(
+            rel.substringAfterLast('/'),
+            fontSize = 11.sp,
+            fontFamily = FontFamily.Monospace,
+            maxLines = 1,
+            overflow = TextOverflow.Ellipsis,
+        )
+    }
+}
+
+// ═══════════════════════ 编辑器标签行 ═══════════════════════
+
 private fun scaleIn() = androidx.compose.animation.scaleIn(spring(dampingRatio = 0.6f))
 private fun scaleOut() = androidx.compose.animation.scaleOut(spring(dampingRatio = 0.6f))
-
-// ═══════════════════════ 编辑器标签行（MD3 ScrollableTabRow） ═══════════════════════
 
 @Composable
 private fun EditorTabs(viewModel: ProjectViewModel, onNewFile: () -> Unit) {
@@ -382,18 +653,18 @@ private fun EditorTabs(viewModel: ProjectViewModel, onNewFile: () -> Unit) {
             containerColor = IdeColors.PanelBg,
             contentColor = IdeColors.TextFg,
             divider = {},
-            modifier = Modifier.height(38.dp),
+            modifier = Modifier.height(36.dp),
         ) {
             viewModel.openTabs.toList().forEach { path ->
                 val active = path == viewModel.activeTab
                 Tab(
                     selected = active,
                     onClick = { viewModel.activateTab(path) },
-                    modifier = Modifier.height(38.dp),
+                    modifier = Modifier.height(36.dp),
                 ) {
                     Row(
                         verticalAlignment = Alignment.CenterVertically,
-                        modifier = Modifier.padding(start = 12.dp, end = 4.dp),
+                        modifier = Modifier.padding(start = 10.dp, end = 2.dp),
                     ) {
                         Text(
                             path.substringAfterLast('/'),
@@ -410,19 +681,18 @@ private fun EditorTabs(viewModel: ProjectViewModel, onNewFile: () -> Unit) {
                             Box(
                                 Modifier
                                     .padding(start = 4.dp)
-                                    .size(6.dp)
+                                    .size(5.dp)
                                     .background(IdeColors.WarnOrange, CircleShape)
                             )
                         }
-                        IconButton(onClick = { viewModel.closeTab(path) }, modifier = Modifier.size(24.dp)) {
-                            Icon(Icons.Filled.Close, contentDescription = "关闭", tint = IdeColors.TextDim, modifier = Modifier.size(13.dp))
+                        IconButton(onClick = { viewModel.closeTab(path) }, modifier = Modifier.size(22.dp)) {
+                            Icon(Icons.Filled.Close, contentDescription = "关闭", tint = IdeColors.TextDim, modifier = Modifier.size(12.dp))
                         }
                     }
                 }
             }
-            // 末尾「＋」新建标签
-            Tab(selected = false, onClick = onNewFile, modifier = Modifier.height(38.dp)) {
-                Icon(Icons.Filled.Add, contentDescription = "新建脚本", tint = IdeColors.TextDim, modifier = Modifier.size(16.dp))
+            Tab(selected = false, onClick = onNewFile, modifier = Modifier.height(36.dp)) {
+                Icon(Icons.Filled.Add, contentDescription = "新建脚本", tint = IdeColors.TextDim, modifier = Modifier.size(15.dp))
             }
         }
     }
@@ -436,88 +706,20 @@ private fun EditorEmptyState(onNewFile: () -> Unit) {
                 Icons.AutoMirrored.Filled.MenuBook,
                 contentDescription = null,
                 tint = IdeColors.TextDim.copy(alpha = 0.5f),
-                modifier = Modifier.size(44.dp),
+                modifier = Modifier.size(40.dp),
             )
-            Spacer(Modifier.height(12.dp))
-            Text("从文件树打开脚本", fontSize = 14.sp, color = IdeColors.TextDim)
+            Spacer(Modifier.height(10.dp))
+            Text("从左侧文件树打开脚本", fontSize = 13.sp, color = IdeColors.TextDim)
             Spacer(Modifier.height(4.dp))
-            Text("或新建一个开始编写剧情", fontSize = 12.sp, color = IdeColors.TextDim.copy(alpha = 0.7f))
-            Spacer(Modifier.height(16.dp))
+            Text("左右拖动侧栏边缘可调宽度", fontSize = 11.sp, color = IdeColors.TextDim.copy(alpha = 0.7f))
+            Spacer(Modifier.height(14.dp))
             Button(
                 onClick = onNewFile,
                 colors = ButtonDefaults.buttonColors(containerColor = IdeColors.AccentDim, contentColor = IdeColors.TextFg),
             ) {
-                Icon(Icons.Filled.Add, contentDescription = null, modifier = Modifier.size(16.dp))
+                Icon(Icons.Filled.Add, contentDescription = null, modifier = Modifier.size(15.dp))
                 Spacer(Modifier.width(4.dp))
-                Text("新建脚本", fontSize = 13.sp)
-            }
-        }
-    }
-}
-
-// ═══════════════════════ 文件树面板 ═══════════════════════
-
-@Composable
-private fun FileTreePanel(
-    viewModel: ProjectViewModel,
-    onClose: () -> Unit,
-    showClose: Boolean,
-    onNewFile: () -> Unit,
-    onCloseProject: () -> Unit,
-    onRename: (String) -> Unit,
-) {
-    Column(Modifier.fillMaxSize()) {
-        Row(
-            verticalAlignment = Alignment.CenterVertically,
-            modifier = Modifier
-                .fillMaxWidth()
-                .height(46.dp)
-                .padding(horizontal = 16.dp),
-        ) {
-            Icon(Icons.Filled.Folder, null, tint = IdeColors.WarnOrange, modifier = Modifier.size(18.dp))
-            Spacer(Modifier.width(8.dp))
-            Text("game/", fontFamily = FontFamily.Monospace, fontSize = 13.sp, fontWeight = FontWeight.SemiBold)
-            Spacer(Modifier.weight(1f))
-            IconButton(onClick = onNewFile, modifier = Modifier.size(30.dp)) {
-                Icon(Icons.Filled.Add, contentDescription = "新建脚本", modifier = Modifier.size(18.dp))
-            }
-            if (showClose) {
-                IconButton(onClick = onClose, modifier = Modifier.size(30.dp)) {
-                    Icon(Icons.Filled.Close, contentDescription = "关闭", modifier = Modifier.size(18.dp))
-                }
-            }
-        }
-        HorizontalDivider(color = IdeColors.PanelBorder)
-        Text(
-            "长按文件可重命名",
-            fontSize = 10.sp,
-            color = IdeColors.TextDim.copy(alpha = 0.6f),
-            modifier = Modifier.padding(horizontal = 16.dp, vertical = 4.dp),
-        )
-        FileTreeList(viewModel, onRename)
-        HorizontalDivider(color = IdeColors.PanelBorder)
-        Row(
-            verticalAlignment = Alignment.CenterVertically,
-            modifier = Modifier
-                .fillMaxWidth()
-                .clickable { onCloseProject() }
-                .padding(horizontal = 16.dp, vertical = 12.dp),
-        ) {
-            Icon(Icons.Filled.Home, contentDescription = null, tint = IdeColors.TextDim, modifier = Modifier.size(18.dp))
-            Spacer(Modifier.width(10.dp))
-            Text("关闭项目，返回欢迎页", fontSize = 13.sp, color = IdeColors.TextDim)
-        }
-        if (showClose) {
-            Row(
-                verticalAlignment = Alignment.CenterVertically,
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .clickable { onClose() }
-                    .padding(start = 16.dp, end = 16.dp, bottom = 24.dp),
-            ) {
-                Icon(Icons.Filled.Close, contentDescription = null, tint = IdeColors.TextDim, modifier = Modifier.size(18.dp))
-                Spacer(Modifier.width(10.dp))
-                Text("收起文件树", fontSize = 13.sp, color = IdeColors.TextDim)
+                Text("新建脚本", fontSize = 12.sp)
             }
         }
     }
@@ -539,8 +741,7 @@ private fun buildFileTree(files: List<String>): FsNode {
         val parts = f.split('/')
         var cur = root
         for (i in 0 until parts.size - 1) {
-            val p = parts.subList(0, i + 1).joinToString("/")
-            cur = cur.dirs.getOrPut(parts[i]) { FsNode(parts[i], p) }
+            cur = cur.dirs.getOrPut(parts[i]) { FsNode(parts[i], parts.subList(0, i + 1).joinToString("/")) }
         }
         cur.files.add(f)
     }
@@ -562,13 +763,14 @@ private fun flattenTree(root: FsNode, expanded: Set<String>): List<TreeNode2> {
 
 @Composable
 private fun FileTreeList(viewModel: ProjectViewModel, onRename: (String) -> Unit) {
-    val tree = remember(viewModel.gameFiles) { buildFileTree(viewModel.gameFiles) }
-    var expanded by remember(viewModel.gameFiles) {
+    val files = remember(viewModel.gameFiles) { viewModel.gameFiles.filter(::isEditableFile) }
+    val tree = remember(files) { buildFileTree(files) }
+    var expanded by remember(files) {
         mutableStateOf(tree.dirs.values.map { it.path }.toSet())
     }
     val flat = remember(tree, expanded) { flattenTree(tree, expanded) }
 
-    LazyColumn(Modifier.fillMaxSize(), contentPadding = PaddingValues(vertical = 6.dp)) {
+    LazyColumn(Modifier.fillMaxSize(), contentPadding = PaddingValues(vertical = 4.dp)) {
         items(flat.size, key = { flat[it].key }) { idx ->
             when (val node = flat[idx]) {
                 is TreeDir -> {
@@ -583,17 +785,12 @@ private fun FileTreeList(viewModel: ProjectViewModel, onRename: (String) -> Unit
                             .clickable {
                                 expanded = if (node.path in expanded) expanded - node.path else expanded + node.path
                             }
-                            .padding(start = (10 + node.depth * 16).dp, end = 8.dp, top = 7.dp, bottom = 7.dp),
+                            .padding(start = (4 + node.depth * 10).dp, end = 4.dp, top = 5.dp, bottom = 5.dp),
                     ) {
-                        Text(
-                            "▸",
-                            fontSize = 12.sp,
-                            color = IdeColors.TextDim,
-                            modifier = Modifier.width(14.dp).rotate(rotation),
-                        )
-                        Icon(Icons.Filled.Folder, null, tint = IdeColors.WarnOrange, modifier = Modifier.size(15.dp))
-                        Spacer(Modifier.width(6.dp))
-                        Text(node.name, fontSize = 13.sp, fontFamily = FontFamily.Monospace)
+                        Text("▸", fontSize = 10.sp, color = IdeColors.TextDim, modifier = Modifier.width(11.dp).rotate(rotation))
+                        Icon(Icons.Filled.Folder, null, tint = IdeColors.WarnOrange, modifier = Modifier.size(12.dp))
+                        Spacer(Modifier.width(4.dp))
+                        Text(node.name, fontSize = 12.sp, fontFamily = FontFamily.Monospace, maxLines = 1, overflow = TextOverflow.Ellipsis)
                     }
                 }
                 is TreeFile -> FileRow(node, viewModel, onRename)
@@ -602,7 +799,6 @@ private fun FileTreeList(viewModel: ProjectViewModel, onRename: (String) -> Unit
     }
 }
 
-@OptIn(androidx.compose.foundation.ExperimentalFoundationApi::class)
 @Composable
 private fun FileRow(node: TreeFile, viewModel: ProjectViewModel, onRename: (String) -> Unit) {
     val active = node.path == viewModel.activeTab
@@ -619,33 +815,92 @@ private fun FileRow(node: TreeFile, viewModel: ProjectViewModel, onRename: (Stri
                 onClick = { viewModel.openGameFile(node.path) },
                 onLongClick = { onRename(node.path) },
             )
-            .padding(start = (40 + node.depth * 16).dp, end = 8.dp, top = 6.dp, bottom = 6.dp),
+            .padding(start = (15 + node.depth * 10).dp, end = 4.dp, top = 4.dp, bottom = 4.dp),
     ) {
         Box(
             Modifier
-                .size(6.dp)
+                .size(5.dp)
                 .background(
                     if (viewModel.dirtyTabs.contains(node.path)) IdeColors.WarnOrange else IdeColors.Accent.copy(alpha = 0.5f),
                     CircleShape,
                 )
         )
-        Spacer(Modifier.width(8.dp))
+        Spacer(Modifier.width(5.dp))
         Text(
             node.name,
-            fontSize = 13.sp,
+            fontSize = 12.sp,
             fontFamily = FontFamily.Monospace,
             color = if (active) IdeColors.TextFg else IdeColors.ConsoleFg,
             maxLines = 1, overflow = TextOverflow.Ellipsis,
         )
-        Spacer(Modifier.weight(1f))
-        if (active) {
-            Icon(
-                Icons.Filled.Delete, contentDescription = "删除",
-                tint = IdeColors.FailRed.copy(alpha = 0.6f),
-                modifier = Modifier
-                    .size(14.dp)
-                    .clickable { viewModel.deleteGameFile(node.path) },
-            )
+    }
+}
+
+// ═══════════════════════ 问题面板 ═══════════════════════
+
+@Composable
+private fun ProblemsPanel(viewModel: ProjectViewModel, onClose: () -> Unit) {
+    Surface(color = IdeColors.ConsoleBg, shadowElevation = 6.dp) {
+        Column(Modifier.fillMaxWidth().heightIn(max = 190.dp)) {
+            Row(
+                verticalAlignment = Alignment.CenterVertically,
+                modifier = Modifier.fillMaxWidth().height(32.dp).padding(start = 10.dp, end = 2.dp),
+            ) {
+                Icon(Icons.Filled.WarningAmber, contentDescription = null, tint = IdeColors.FailRed, modifier = Modifier.size(14.dp))
+                Spacer(Modifier.width(5.dp))
+                Text(
+                    "问题 ${viewModel.problems.size}",
+                    fontSize = 11.sp, fontWeight = FontWeight.SemiBold,
+                    color = if (viewModel.problems.isEmpty()) IdeColors.TextDim else IdeColors.FailRed,
+                )
+                Spacer(Modifier.width(8.dp))
+                Text(
+                    viewModel.activeTab ?: "",
+                    fontSize = 10.sp, color = IdeColors.TextDim,
+                    maxLines = 1, overflow = TextOverflow.Ellipsis,
+                    modifier = Modifier.weight(1f),
+                    fontFamily = FontFamily.Monospace,
+                )
+                IconButton(onClick = onClose, modifier = Modifier.size(28.dp)) {
+                    Icon(Icons.Filled.Close, contentDescription = "关闭", tint = IdeColors.TextDim, modifier = Modifier.size(14.dp))
+                }
+            }
+            HorizontalDivider(color = IdeColors.PanelBorder)
+            if (viewModel.problems.isEmpty()) {
+                Row(
+                    verticalAlignment = Alignment.CenterVertically,
+                    modifier = Modifier.padding(horizontal = 12.dp, vertical = 10.dp),
+                ) {
+                    Box(Modifier.size(6.dp).background(IdeColors.OkGreen, CircleShape))
+                    Spacer(Modifier.width(6.dp))
+                    Text("未发现语法问题", fontSize = 11.sp, color = IdeColors.TextDim)
+                }
+            } else {
+                LazyColumn(Modifier.fillMaxWidth().heightIn(max = 154.dp), contentPadding = PaddingValues(vertical = 2.dp)) {
+                    items(viewModel.problems.size, key = { "${viewModel.problems[it].line}-$it" }) { idx ->
+                        val p = viewModel.problems[idx]
+                        Row(
+                            verticalAlignment = Alignment.CenterVertically,
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .clickable { viewModel.requestJump(p.line, 1) }
+                                .padding(horizontal = 10.dp, vertical = 5.dp),
+                        ) {
+                            Text(
+                                "Ln ${p.line}",
+                                fontSize = 10.sp, fontFamily = FontFamily.Monospace,
+                                color = IdeColors.FailRed,
+                                modifier = Modifier.width(48.dp),
+                            )
+                            Text(
+                                p.message,
+                                fontSize = 11.sp, color = IdeColors.TextFg,
+                                maxLines = 2, overflow = TextOverflow.Ellipsis,
+                            )
+                        }
+                    }
+                }
+            }
         }
     }
 }
@@ -655,50 +910,52 @@ private fun FileRow(node: TreeFile, viewModel: ProjectViewModel, onRename: (Stri
 @Composable
 private fun StatusBar(
     viewModel: ProjectViewModel,
+    problemsOpen: Boolean,
+    onToggleProblems: () -> Unit,
     onOpenTerminal: () -> Unit,
-    onOpenProblems: () -> Unit,
+    onOpenBuild: () -> Unit,
 ) {
     Surface(color = IdeColors.PanelBg) {
         Row(
             verticalAlignment = Alignment.CenterVertically,
-            modifier = Modifier
-                .fillMaxWidth()
-                .height(28.dp)
-                .padding(start = 0.dp, end = 10.dp),
+            modifier = Modifier.fillMaxWidth().height(28.dp).padding(end = 8.dp),
         ) {
-            // 打开独立终端页（不在工具栏，属于控制台页）
-            IconButton(onClick = onOpenTerminal, modifier = Modifier.size(30.dp)) {
-                Icon(
-                    Icons.Filled.Terminal,
-                    contentDescription = "终端",
-                    tint = IdeColors.TextDim,
-                    modifier = Modifier.size(16.dp),
-                )
+            IconButton(onClick = onOpenTerminal, modifier = Modifier.size(28.dp)) {
+                Icon(Icons.Filled.Terminal, contentDescription = "终端", tint = IdeColors.TextDim, modifier = Modifier.size(15.dp))
+            }
+            IconButton(onClick = onOpenBuild, modifier = Modifier.size(28.dp)) {
+                Icon(Icons.Filled.Build, contentDescription = "构建台", tint = IdeColors.TextDim, modifier = Modifier.size(14.dp))
             }
             Text(
                 viewModel.activeTab ?: "无打开文件",
                 fontSize = 10.sp, color = IdeColors.TextDim, fontFamily = FontFamily.Monospace,
                 maxLines = 1, overflow = TextOverflow.Ellipsis, modifier = Modifier.weight(1f),
             )
-            Spacer(Modifier.width(10.dp))
             Text(
                 "Ln ${viewModel.cursorLine}, Col ${viewModel.cursorCol}",
                 fontSize = 10.sp, color = IdeColors.TextDim, fontFamily = FontFamily.Monospace,
             )
-            if (viewModel.problems.isNotEmpty()) {
-                Spacer(Modifier.width(10.dp))
-                Row(
-                    verticalAlignment = Alignment.CenterVertically,
-                    modifier = Modifier.clickable(onClick = onOpenProblems),
-                ) {
-                    Box(Modifier.size(6.dp).background(IdeColors.FailRed, CircleShape))
-                    Text(
-                        " ${viewModel.problems.size} 个问题",
-                        fontSize = 10.sp, color = IdeColors.FailRed,
-                    )
-                }
+            Spacer(Modifier.width(8.dp))
+            Row(
+                verticalAlignment = Alignment.CenterVertically,
+                modifier = Modifier
+                    .clip(RoundedCornerShape(5.dp))
+                    .background(if (problemsOpen) IdeColors.FailRed.copy(alpha = 0.12f) else Color.Transparent)
+                    .clickable(onClick = onToggleProblems)
+                    .padding(horizontal = 5.dp, vertical = 2.dp),
+            ) {
+                Box(
+                    Modifier
+                        .size(6.dp)
+                        .background(if (viewModel.problems.isEmpty()) IdeColors.OkGreen else IdeColors.FailRed, CircleShape)
+                )
+                Text(
+                    " ${viewModel.problems.size}",
+                    fontSize = 10.sp,
+                    color = if (viewModel.problems.isEmpty()) IdeColors.TextDim else IdeColors.FailRed,
+                )
             }
-            Spacer(Modifier.width(10.dp))
+            Spacer(Modifier.width(8.dp))
             val dotColor by animateColorAsState(
                 when {
                     viewModel.building -> IdeColors.Accent
@@ -708,17 +965,14 @@ private fun StatusBar(
                 tween(250), label = "statusDot",
             )
             Box(Modifier.size(6.dp).background(dotColor, CircleShape))
-            AnimatedContent(
-                targetState = when {
+            Text(
+                when {
                     viewModel.building -> "构建中"
-                    viewModel.dirtyTabs.isNotEmpty() -> "未保存 ×${viewModel.dirtyTabs.size}"
+                    viewModel.dirtyTabs.isNotEmpty() -> "未保存"
                     else -> "就绪"
                 },
-                transitionSpec = { fadeIn(tween(150)) togetherWith fadeOut(tween(150)) },
-                label = "statusText",
-            ) { label ->
-                Text(label, fontSize = 10.sp, color = IdeColors.TextDim, modifier = Modifier.padding(start = 4.dp))
-            }
+                fontSize = 10.sp, color = IdeColors.TextDim, modifier = Modifier.padding(start = 4.dp),
+            )
         }
     }
 }
@@ -728,7 +982,7 @@ private fun StatusBar(
 @Composable
 private fun NewFileDialog(viewModel: ProjectViewModel, onDismiss: () -> Unit) {
     var name by remember { mutableStateOf("") }
-    androidx.compose.material3.AlertDialog(
+    AlertDialog(
         onDismissRequest = onDismiss,
         containerColor = IdeColors.PanelBg,
         title = { Text("新建文件") },
@@ -741,8 +995,8 @@ private fun NewFileDialog(viewModel: ProjectViewModel, onDismiss: () -> Unit) {
                     singleLine = true,
                 )
                 Text(
-                    "无扩展名 → 创建 game/script/<名称>.rpy；\n带扩展名（如 bg.png）→ 按原名创建到 game/ 下；\n也可填写相对路径精确指定。",
-                    fontSize = 12.sp, color = IdeColors.TextDim,
+                    "无扩展名 → game/script/<名称>.rpy\n带扩展名（如 bg.png）→ 按原名创建到 game/\n也可填写相对路径精确指定",
+                    fontSize = 11.sp, color = IdeColors.TextDim,
                 )
             }
         },
@@ -788,18 +1042,17 @@ private val manualSections = listOf(
 define e = Character("艾琳")
 
 label start:
-    $ points += 1
+    \$ points += 1
     if points >= 3:
-        e "好感度很高嘛。"
-""",
-        "default 定义存档变量；define 定义常量（如角色）；$ 行执行任意 Python；if/elif/else 条件分支。",
+        e "好感度很高嘛。\"""",
+        "default 定义存档变量；define 定义常量（如角色）；\$ 行执行任意 Python；if/elif/else 条件分支。",
     ),
     ManualSection(
         "图像与音频", """image bg room = "images/room.jpg"
 play music "audio/bgm.ogg"
 play sound "audio/click.wav"
 stop music fadeout 1.0""",
-        "image 注册图像；play/stop 控制音乐音效，支持 fadeout。",
+        "image 注册图像；play/stop 控制音乐音效，支持 fadeout。资源可从左侧「资源」页导入。",
     ),
     ManualSection(
         "界面 screen", """screen stats():
@@ -833,7 +1086,7 @@ label start:
         "persistent 跨周目", """default persistent.unlocked_end = False
 
 label good_end:
-    $ persistent.unlocked_end = True
+    \$ persistent.unlocked_end = True
     "真结局已解锁！"
 
 label title:
@@ -881,10 +1134,10 @@ transform slidein:
         return x * 2
 
 label start:
-    $ answer = double(21)
+    \$ answer = double(21)
     "答案是 [answer]"
 """,
-        "init python 在启动时执行（定义函数/常量）；$ 单行；python: 块多行。",
+        "init python 在启动时执行（定义函数/常量）；\$ 单行；python: 块多行。",
     ),
 )
 
@@ -892,18 +1145,19 @@ private val devManualSections = listOf(
     ManualSection(
         "完整工作流", """1. 欢迎页 → 新建项目
 2. 编辑 script.rpy（或新建脚本）
-3. 顶栏 ▶ 构建
-4. 构建完成 → 安装""",
-        "构建会自动保存所有未保存的文件。产物 APK 位于存储根目录 RenPyForge/output/。",
+3. 顶栏 🛠 打开构建台
+4. 在构建台点「开始构建」
+5. 构建完成 → 安装""",
+        "构建会先保存所有未保存的文件。产物 APK 位于存储根目录 RenPyForge/output/。",
     ),
     ManualSection(
-        "资源文件", """game/
+        "资源导入", """game/
 ├── script.rpy
-├── images/       ← 图片自动注册
+├── images/       ← 图片（左侧「资源」页可导入）
 │   └── bg room.png   → scene bg room
-└── audio/        ← 音频
+└── audio/        ← 音频（左侧「资源」页可导入）
     └── bgm.ogg       → play music "audio/bgm.ogg\"""",
-        "images/ 下的图片文件名（去扩展名）自动成为图像名；空格即空格：\"bg room.png\" 对应 scene bg room。",
+        "images/ 下的图片文件名（去扩展名）自动成为图像名；空格即空格：\"bg room.png\" 对应 scene bg room。点击资源项可复制相对路径。",
     ),
     ManualSection(
         "文件管理与传输", """手机存储根目录：
@@ -912,11 +1166,12 @@ RenPyForge/projects/<项目名>/game/""",
     ),
     ManualSection(
         "构建配置", """包名：org.renpy.forge.<项目名>
-  （可在构建面板修改）
+  （IDE 菜单 → 项目设置可改）
 游戏名：显示在桌面图标下
+图标 / 启动图：项目设置里选择图片
 签名：内置密钥，同一包名
       覆盖安装即可更新""",
-        "改包名会生成一个「新应用」而非覆盖旧版；想更新已安装的游戏请保持包名不变。",
+        "改包名会生成一个「新应用」而非覆盖旧版；想更新已安装的游戏请保持包名不变。启动图会替换 assets/android-presplash.jpg。",
     ),
     ManualSection(
         "脚本拆分", """game/script.rpy      ← 主剧情
@@ -984,7 +1239,15 @@ init python:
             "系统设置里授予该游戏「所有文件访问」权限。",
     ),
     ManualSection(
-        "常见问题", """✘ 构建失败 → 看构建面板控制台的 ✘ 行
+        "高级权限（Root / Shizuku）", """设置 → 高级权限：
+· Root：检测到 su 后，终端可切到 Root 模式
+· Shizuku：安装并启动 Shizuku 后申请授权
+终端页顶部可切换 本机 / Root / Shizuku
+构建产物支持静默安装（pm install）""",
+        "提权是可选的：不授权也能正常构建。Shizuku 以 shell 身份执行，权限比 Root 低但无需 root；静默安装优先使用 Root。",
+    ),
+    ManualSection(
+        "常见问题", """✘ 构建失败 → 看构建台日志的 ✘ 行
 ✘ 脚本报错 → 检查缩进必须是 4 空格
 ✘ 图片不显示 → 检查文件名与 scene/show 一致
 ✘ 中文乱码 → 使用支持中文的字体文件""",
@@ -1057,6 +1320,7 @@ private fun ManualSheet(onDismiss: () -> Unit) {
                             color = IdeColors.ConsoleFg,
                             modifier = Modifier
                                 .fillMaxWidth()
+                                .horizontalScroll(rememberScrollState())
                                 .background(IdeColors.ConsoleBg, RoundedCornerShape(6.dp))
                                 .padding(8.dp),
                         )
@@ -1233,7 +1497,7 @@ private fun OutlineSheet(
 @Composable
 private fun RenameDialog(path: String, onConfirm: (String?) -> Unit) {
     var name by remember(path) { mutableStateOf(path.substringAfterLast('/').removeSuffix(".rpy")) }
-    androidx.compose.material3.AlertDialog(
+    AlertDialog(
         onDismissRequest = { onConfirm(null) },
         containerColor = IdeColors.PanelBg,
         title = { Text("重命名文件") },
