@@ -118,7 +118,11 @@ fun WelcomeScreen(
         },
         floatingActionButton = {
             ExtendedFloatingActionButton(
-                onClick = { showCreate = true },
+                onClick = {
+                    viewModel.newProjectName = ""
+                    viewModel.statusMessage = null
+                    showCreate = true
+                },
                 icon = { Icon(Icons.Filled.Add, contentDescription = null) },
                 text = { Text("新建项目") },
                 containerColor = IdeColors.Accent,
@@ -239,7 +243,6 @@ fun WelcomeScreen(
 
     // 新建项目对话框
     if (showCreate) {
-        var newName by remember { mutableStateOf("") }
         AlertDialog(
             onDismissRequest = { showCreate = false },
             containerColor = IdeColors.PanelBg,
@@ -247,8 +250,8 @@ fun WelcomeScreen(
             text = {
                 Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
                     OutlinedTextField(
-                        value = newName,
-                        onValueChange = { newName = it },
+                        value = viewModel.newProjectName,
+                        onValueChange = { viewModel.newProjectName = it },
                         label = { Text("项目名称") },
                         singleLine = true,
                     )
@@ -263,8 +266,7 @@ fun WelcomeScreen(
             },
             confirmButton = {
                 TextButton(onClick = {
-                    viewModel.createProject()
-                    if (viewModel.currentProject != null) showCreate = false
+                    if (viewModel.createProject()) showCreate = false
                 }) { Text("创建") }
             },
             dismissButton = { TextButton(onClick = { showCreate = false }) { Text("取消") } },

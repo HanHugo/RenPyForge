@@ -12,8 +12,8 @@ android {
         applicationId = "com.renpyforge.app"
         minSdk = 26
         targetSdk = 34
-        versionCode = 32
-        versionName = "1.3.1"
+        versionCode = 33
+        versionName = "1.3.2"
     }
 
     signingConfigs {

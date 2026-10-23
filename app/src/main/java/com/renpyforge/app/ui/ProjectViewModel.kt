@@ -187,18 +187,25 @@ class ProjectViewModel(private val context: Context) {
         projectList = projects.listProjects()
     }
 
-    fun createProject() {
+    /** @return true 表示创建成功（供对话框判断是否关闭） */
+    fun createProject(): Boolean {
         val name = newProjectName.trim()
-        if (name.isEmpty()) return
-        try {
+        if (name.isEmpty()) {
+            statusMessage = "请输入项目名称"
+            return false
+        }
+        return try {
             projects.createProject(name)
             openProject(name)
             newProjectName = ""
             statusMessage = "项目「$name」已创建于 $storagePath/projects/$name"
+            refresh()
+            true
         } catch (e: Exception) {
-            statusMessage = e.message
+            statusMessage = e.message ?: "创建失败"
+            refresh()
+            false
         }
-        refresh()
     }
 
     fun deleteProject(name: String) {
