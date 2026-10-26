@@ -12,8 +12,12 @@ import java.util.zip.ZipOutputStream
  * 以 aapt2 link 产出的 base.apk 为底（二进制资源 + manifest），追加：
  *  - classes.dex（内置 RAPT Java 模板预编译产物）
  *  - lib/arm64-v8a/librenpython.so（内置官方引擎库）
- *  - assets 加 x- 前缀的游戏文件 + renpy/common 全部文件（逐级 x- 前缀；按扩展名决定 STORED）
- *  - assets/private.mp3（tar：main.py + renpy 全部 Python 运行时文件，STORED）
+ *  - assets 加 renpy/common 全部文件（逐级 x- 前缀；按扩展名决定 STORED）
+ *  - assets/private.mp3（tar：main.py + renpy + lib/python3.12 + game/，STORED）
+ *
+ * 注意：游戏文件不再打入 assets —— Ren'Py 在 Android 上从 assets 只加载 .rpyc 且
+ * 永不编译 .rpy；脚本必须解包到可写的 files/game/ 才能自动编译、修改才能生效
+ * （由 private.mp3 解包完成，见 BuildPipeline）。
  */
 object ApkAssembler {
 
@@ -21,7 +25,6 @@ object ApkAssembler {
         val baseApk: File,
         val classesDex: File,
         val engineSo: File,
-        val gameDir: File,
         val commonDir: File,
         val privateTar: File,
         val presplash: File? = null,    // → assets/android-presplash.jpg
@@ -59,10 +62,8 @@ object ApkAssembler {
             putFile(zip, existing, "classes.dex", inputs.classesDex)
             putFile(zip, existing, "lib/arm64-v8a/librenpython.so", inputs.engineSo)
 
-            // 3) 游戏目录：assets/<x- 前缀>，按扩展名决定是否 STORED
-            addTree(zip, existing, inputs.gameDir, "game")
-
-            // 4) renpy/common/** → assets/x-renpy/x-common/**
+            // 3) renpy/common/** → assets/x-renpy/x-common/**
+            //    （common 全部为 .rpyc，assets 直读无需编译；游戏文件走 private.mp3）
             addTree(zip, existing, inputs.commonDir, "renpy/common")
 
             // 5) private.mp3（必须 STORED）

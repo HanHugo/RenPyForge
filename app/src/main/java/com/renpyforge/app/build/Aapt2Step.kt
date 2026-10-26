@@ -19,7 +19,7 @@ import java.io.File
  */
 object Aapt2Step {
 
-    fun run(toolchain: ToolchainManager, config: BuildConfig, log: StringBuilder): File {
+    fun run(toolchain: ToolchainManager, config: BuildConfig, privateVersion: String, log: StringBuilder): File {
         val aapt2 = toolchain.resolveExecutable("aapt2")
             ?: throw StepException(StepId.AAPT2, "未找到内置 aapt2（nativeLibraryDir/libaapt2.so）")
         val ctx = toolchain.appContext()
@@ -51,8 +51,9 @@ object Aapt2Step {
             mapOf(
                 "config.name" to config.appName,
                 "config.icon_name" to config.appName,
-                // 关键：游戏端以此判断是否解包 private.mp3，缺失会导致不解包→闪退
-                "private_version" to toolchain.runtimeVersion(),
+                // 关键：游戏端以此与 files/private.version 比对决定是否重新解包 private.mp3。
+                // 必须包含游戏文件哈希（由 BuildPipeline 传入），否则改了代码不会重新解包。
+                "private_version" to privateVersion,
             ),
         )
         File(resDir, "values").mkdirs()

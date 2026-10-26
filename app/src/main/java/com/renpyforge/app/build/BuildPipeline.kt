@@ -114,6 +114,25 @@ class BuildPipeline(
         }
     }
 
+    /**
+     * private_version：运行时版本 + 游戏文件内容哈希。
+     * 游戏端 PythonSDLActivity 将它与 files/private.version 比对，不一致则重新解包
+     * private.mp3 到 /data/user/0/<包名>/files/（只删 lib、renpy，不动 game 与 saves，
+     * tar 内同名文件直接覆盖）。因此游戏文件变化 → 版本变化 → 代码修改在重装后生效。
+     */
+    private fun privateVersion(): String {
+        val md = java.security.MessageDigest.getInstance("MD5")
+        val gameDir = ProjectManager(context).gameDir(projectName)
+        fun feed(s: String) = md.update(s.toByteArray())
+        feed("runtime=" + toolchain.runtimeVersion() + ";")
+        if (gameDir.isDirectory) {
+            gameDir.walkTopDown().filter { it.isFile }.sorted().forEach {
+                feed(it.relativeTo(gameDir).invariantSeparatorsPath + ":" + it.length() + ":" + it.lastModified() + ";")
+            }
+        }
+        return md.digest().joinToString("") { "%02x".format(it) }
+    }
+
     suspend fun run(): File = withContext(Dispatchers.IO) {
         fun enter(id: StepId) { onUpdate(id, StepState.RUNNING, "▶ 开始：${id.label}") }
         fun done(id: StepId) { onUpdate(id, StepState.OK, "✔ 完成：${id.label}") }
@@ -150,7 +169,9 @@ class BuildPipeline(
         // —— 步骤 2：aapt2 资源编译与链接 ——
         enter(StepId.AAPT2)
         val aapt2Log = StringBuilder()
-        val baseApk = Aapt2Step.run(toolchain, config, aapt2Log)
+        // private_version 必须在 aapt2 阶段渲染进字符串资源（游戏文件哈希 + 运行时版本）
+        val version = privateVersion()
+        val baseApk = Aapt2Step.run(toolchain, config, version, aapt2Log)
         aapt2Log.lines().forEach { if (it.isNotBlank()) log(StepId.AAPT2, it) }
         done(StepId.AAPT2)
 
@@ -178,6 +199,14 @@ class BuildPipeline(
                     ensureParentDirs(tar, addedDirs, rel)
                     tar.addFile(rel, f)
                 }
+                // 3a-3) 游戏文件 → game/**（解包到 /data/user/0/<包名>/files/game/）。
+                // 关键：Ren'Py 在 Android 上只从 APK assets 加载 .rpyc（不编译 .rpy）；
+                // 只有放在可写的 files/game/ 里，.rpy 才会自动编译、修改才会生效。
+                gameDir.walkTopDown().filter { it.isFile }.sorted().forEach { f ->
+                    val rel = "game/" + f.relativeTo(gameDir).invariantSeparatorsPath
+                    ensureParentDirs(tar, addedDirs, rel)
+                    tar.addFile(rel, f)
+                }
             }
         }
         log(StepId.ASSEMBLE, "private.mp3：${privateTar.length() / 1024} KB")
@@ -200,7 +229,6 @@ class BuildPipeline(
                 baseApk = baseApk,
                 classesDex = toolchain.cachedDex(),
                 engineSo = toolchain.engineSo(),
-                gameDir = gameDir,
                 commonDir = commonDir,
                 privateTar = privateTar,
                 presplash = presplash,
