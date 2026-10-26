@@ -1016,6 +1016,21 @@ private data class ManualSection(val title: String, val code: String, val desc: 
 
 private val manualSections = listOf(
     ManualSection(
+        "常见错误对照（必读）", """✘ scene "87870.png"
+✔ scene 87870
+
+✘ show "立绘.jpg"
+✔ show 立绘
+
+✘ hide "立绘.jpg"
+✔ hide 立绘
+
+✘ game_menu.png          ← 单独一行文件名不是语句
+✔ image game_menu = "game_menu.png"
+✔ show game_menu""",
+        "show/scene/hide 后面跟的是「图片名」（不带引号、不带扩展名）。图片放在 game/images/ 里时，文件名去掉扩展名就是图片名。带引号的写法会直接报 expected 'image_name_component' 错误。",
+    ),
+    ManualSection(
         "剧本基础", """label start:
     scene bg room
     show eileen happy
@@ -1024,35 +1039,103 @@ private val manualSections = listOf(
         "label 是流程入口；scene 换背景；show 显示立绘；直接写字符串就是对话，前面加角色名变量表示谁在说话。",
     ),
     ManualSection(
+        "图像语句详解", """# 方式一：图片放 game/images/，文件名自动注册
+#   images/87870.png      → scene 87870
+#   images/bg room.png    → scene bg room（空格分属性）
+#   images/eileen happy.png → show eileen happy
+
+# 方式二：显式定义（图片不在 images/ 或想用别名）
+image bg room = "images/room.jpg"
+image eileen = "chara/eileen.png"
+
+# 位置与属性
+show eileen at left
+show eileen happy        # 属性叠加
+hide eileen
+scene bg room with dissolve""",
+        "scene 会清空立绘层并显示背景；show 叠加显示；hide 隐藏。at 指定位置（left/right/center）。文件名中的空格会成为图片属性，方便用 show eileen happy 这类组合。",
+    ),
+    ManualSection(
+        "音频语句", """play music "audio/bgm.ogg" fadein 1.0
+play sound "audio/click.wav"
+play ambient "audio/rain.ogg" fadein 2.0
+queue music "audio/next.ogg"    # 排队下一首
+stop music fadeout 1.0
+
+# 音量调节（0.0 ~ 1.0）
+play music "audio/bgm.ogg" volume 0.6""",
+        "music 循环播放、sound 一次性音效、ambient 环境音、queue 排队不中断。音频文件放 game/audio/，路径带扩展名和引号（这里引号是正确的！与 show/scene 不同）。",
+    ),
+    ManualSection(
         "选择分支", """menu:
     "去图书馆":
         jump library
     "回家睡觉":
+        jump home
+
+# 带条件/次数限制的选项
+menu:
+    "牵手" if points >= 3:
+        jump love_end
+    "回家":
         jump home""",
-        "menu: 创建选项；每个选项是一段缩进的 \"文本\": 加后续动作。",
+        "menu: 创建选项；选项后可加 if 条件控制显示；jump 跳走，也可以直接在选项下写对话后 fallthrough。",
     ),
     ManualSection(
         "跳转与标签", """label library:
     "这里很安静。"
-    jump start""",
-        "jump 跳到另一个 label；call 会记住返回位置，配合 return 回来。",
+    jump start
+
+# call 会记住来源，return 回来
+label chapter1:
+    call event_a
+    "继续主线。"
+
+label event_a:
+    "事件内容……"
+    return""",
+        "jump 是「跳过去不回头」；call 是「调用子程序」，子程序 return 后回到 call 的下一句。同一项目内 label 名不能重复。",
     ),
     ManualSection(
         "变量", """default points = 0
 define e = Character("艾琳")
 
 label start:
-    \$ points += 1
+    $ points += 1
     if points >= 3:
-        e "好感度很高嘛。\"""",
-        "default 定义存档变量；define 定义常量（如角色）；\$ 行执行任意 Python；if/elif/else 条件分支。",
+        e "好感度很高嘛。"
+    elif points == 2:
+        e "感觉还不错。"
+    else:
+        e "初次见面。\"""",
+        "default 定义存档变量（会存进档）；define 定义常量（角色、图像等，不存档）；$ 行执行 Python；if/elif/else 条件分支。",
     ),
     ManualSection(
-        "图像与音频", """image bg room = "images/room.jpg"
-play music "audio/bgm.ogg"
-play sound "audio/click.wav"
-stop music fadeout 1.0""",
-        "image 注册图像；play/stop 控制音乐音效，支持 fadeout。资源可从左侧「资源」页导入。",
+        "角色进阶", """define e = Character(
+    "艾琳",
+    color="#88ccff",          # 名字颜色
+    what_prefix="「",          # 台词前缀
+    what_suffix="」",          # 台词后缀
+    who_suffix="：",
+)
+
+define narrator = Character(None)   # 无名旁白
+define centered = Character(None, kind=centered)""",
+        "Character 支持名字颜色、前后缀、样式等参数。kind 可继承已有角色配置。None 表示旁白（不显示说话人）。",
+    ),
+    ManualSection(
+        "转场大全", """with dissolve              # 淡入淡出（最常用）
+with fade                  # 先黑屏再淡入
+with move                  # 移动
+with pixellate             # 像素化
+with blinds                # 百叶窗
+with flash                 # 闪白（雷声/枪声）
+with vpunch                # 垂直震动（撞击）
+
+# 自定义时长
+with Dissolve(1.5)
+$ renpy.transition(Fade(0.5, 0.5, 0.5))""",
+        "with 应用在画面变化（scene/show/hide）之后。常用的有 dissolve / fade / move / pixellate / flash / hpunch / vpunch。",
     ),
     ManualSection(
         "界面 screen", """screen stats():
@@ -1062,14 +1145,69 @@ stop music fadeout 1.0""",
             textbutton "关闭" action Return()
 
 label start:
-    show screen stats""",
-        "screen 定义 UI；[变量] 插值显示；textbutton + action 响应点击；show screen 显示，hide screen 隐藏。",
+    show screen stats
+    "..."
+    hide screen stats
+
+# 模态（阻断点击穿透）与交互式
+call screen stats""",
+        "screen 定义 UI；[变量] 插值显示；textbutton + action 响应点击。show/hide screen 非阻断；call screen 阻断并等待 Return 值。",
     ),
     ManualSection(
-        "转场与停留", """with dissolve
-pause 2.0
-window hide""",
-        "with 指定转场效果（dissolve/fade 等）；pause 暂停秒数。",
+        "call screen 交互", """screen choice_ui():
+    vbox:
+        textbutton "吃蛋糕" action Return("cake")
+        textbutton "吃苹果" action Return("apple")
+
+label start:
+    $ result = renpy.call_screen("choice_ui")
+    if result == "cake":
+        "你选择了蛋糕。\"""",
+        "call screen 会暂停剧情等待玩家点击，按钮的 Return(值) 会作为返回值，可用来做复杂选择界面、小游戏入口。",
+    ),
+    ManualSection(
+        "常用 action 速查", """textbutton "回标题" action ShowMenu("main_menu")
+textbutton "跳转" action Jump("chapter2")
+textbutton "显示界面" action Show("stats")
+textbutton "隐藏界面" action Hide("stats")
+textbutton "存档" action FileSave(1)
+textbutton "读档" action FileLoad(1)
+textbutton "设置变量" action SetVariable("points", 10)
+textbutton "加一点" action ToggleVariable("flag")
+textbutton "退出游戏" action Quit(confirm=True)""",
+        "action 是按钮被点击时执行的动作；常用有 Jump / Show / Hide / ShowMenu / FileSave / FileLoad / SetVariable / ToggleVariable / Quit。",
+    ),
+    ManualSection(
+        "文本插值与格式", """label start:
+    $ name = "艾琳"
+    $ score = 97
+    "你好，[name]！得分 [score] 分。"
+    "得分是 [score!q]"      # !q 转义
+    "进度 [[50%]"           # [[ 显示字面 [
+    "换行\\n第二行"""",
+        "[变量] 会替换为值；[[ 输出字面的 [；\\n 换行。对话里也能直接用插值。",
+    ),
+    ManualSection(
+        "玩家输入", """define p = Character("[player_name]")
+
+label start:
+    $ player_name = renpy.input("你叫什么名字？", length=20)
+    if player_name == "":
+        $ player_name = "路人"
+    p "我叫 [player_name]。\"""",
+        "renpy.input 弹出输入框返回字符串；记得给默认值。配合 Character(\"[player_name]\") 让名字实时生效。",
+    ),
+    ManualSection(
+        "循环与随机", """label start:
+    $ days = ["周一", "周二", "周三"]
+    $ i = 0
+    while i < len(days):
+        "今天是 [days[i]]"
+        $ i += 1
+
+    $ weather = renpy.random.choice(["晴", "雨", "雪"])
+    "今天天气：[weather]\"""",
+        "while 循环；renpy.random.choice 随机选取、randint(a,b) 随机整数。注意循环里要有跳出条件，否则死循环。",
     ),
     ManualSection(
         "存档与读档", """screen save_ui():
@@ -1086,7 +1224,7 @@ label start:
         "persistent 跨周目", """default persistent.unlocked_end = False
 
 label good_end:
-    \$ persistent.unlocked_end = True
+    $ persistent.unlocked_end = True
     "真结局已解锁！"
 
 label title:
@@ -1125,8 +1263,24 @@ screen title():
 
 transform slidein:
     xoffset -400
-    easein 0.5 xoffset 0""",
-        "show 时接 ATL 块做位移动画；transform 定义可复用动画；easein/linear 是插值方式。",
+    easein 0.5 xoffset 0
+
+# 循环动画
+transform float:
+    yoffset 0
+    block:
+        linear 1.0 yoffset -10
+        linear 1.0 yoffset 0
+        repeat""",
+        "show 时接 ATL 块做位移动画；transform 定义可复用动画；easein/linear 是插值方式；block + repeat 做循环。",
+    ),
+    ManualSection(
+        "语音与旁白", """voice "audio/vo_001.ogg"
+e "这句会配上语音。"
+
+# config 控制语音在点击后停止
+define config.voice_sustain = False""",
+        "voice 播放一次性配音；与 play sound 不同，voice 专用于角色语音，切换台词自动停止。",
     ),
     ManualSection(
         "Python 块", """init python:
@@ -1134,10 +1288,10 @@ transform slidein:
         return x * 2
 
 label start:
-    \$ answer = double(21)
+    $ answer = double(21)
     "答案是 [answer]"
 """,
-        "init python 在启动时执行（定义函数/常量）；\$ 单行；python: 块多行。",
+        "init python 在启动时执行（定义函数/常量）；$ 单行；python: 块多行。",
     ),
 )
 
@@ -1247,11 +1401,15 @@ init python:
         "提权是可选的：不授权也能正常构建。Shizuku 以 shell 身份执行，权限比 Root 低但无需 root；静默安装优先使用 Root。",
     ),
     ManualSection(
-        "常见问题", """✘ 构建失败 → 看构建台日志的 ✘ 行
+        "常见问题", """✘ expected 'image_name_component'
+  → show/scene/hide 带了引号，去掉引号和扩展名
+✘ expected statement（单独文件名）
+  → 删掉该行，或用 image 名 = "文件" 定义
+✘ 构建失败 → 看构建台日志的 ✘ 行
 ✘ 脚本报错 → 检查缩进必须是 4 空格
 ✘ 图片不显示 → 检查文件名与 scene/show 一致
 ✘ 中文乱码 → 使用支持中文的字体文件""",
-        "游戏运行报错会显示 traceback，对照行号回编辑器修复即可。",
+        "写错语法时编辑器底部「问题」面板会当场标红并给出修法，不用等游戏运行报错。游戏运行报错会显示 traceback，对照行号回编辑器修复。",
     ),
 )
 

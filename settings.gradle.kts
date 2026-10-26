@@ -1,20 +1,16 @@
 pluginManagement {
     repositories {
-        maven("https://maven.aliyun.com/repository/google")  // google 镜像
-        maven("https://maven.aliyun.com/repository/gradle-plugin")
-        maven("https://maven.aliyun.com/repository/public")
         google()
-        mavenCentral()
+        // 腾讯云 Maven 镜像（central 全量；storage-download.googleapis.com 大文件限速严重）
+        maven("https://mirrors.cloud.tencent.com/nexus/repository/maven-public/")
         gradlePluginPortal()
     }
 }
 dependencyResolutionManagement {
     repositoriesMode.set(RepositoriesMode.FAIL_ON_PROJECT_REPOS)
     repositories {
-        maven("https://maven.aliyun.com/repository/google")  // google 镜像
-        maven("https://maven.aliyun.com/repository/public")
         google()
-        mavenCentral()
+        maven("https://mirrors.cloud.tencent.com/nexus/repository/maven-public/")
     }
 }
 rootProject.name = "RenPyForge"

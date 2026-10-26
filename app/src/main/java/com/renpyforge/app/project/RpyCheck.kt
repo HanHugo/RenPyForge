@@ -15,6 +15,15 @@ object RpyCheck {
     private val BLOCK_STATEMENTS = listOf("label", "menu", "screen", "style", "transform", "python")
     private val PYTHON_BLOCK = Regex("""^\s*(?:init\s+)?python(?:\s+early)?\s*:""")
 
+    // show/scene/hide 后跟带引号的文件名（Ren'Py 语法错误：这三个语句只接受图片名）
+    private val IMG_STMT_QUOTED = Regex("""^\s*(?:show|scene|hide)\s+["']""")
+
+    // 单独一行的图片/音频文件名（不是合法语句）
+    private val BARE_FILENAME = Regex(
+        """^\s*[\w\-\u4e00-\u9fff.]+\.(?:png|jpe?g|webp|gif|bmp|ogg|opus|mp3|wav)\s*$""",
+        RegexOption.IGNORE_CASE,
+    )
+
     fun check(content: String): List<Problem> {
         val problems = mutableListOf<Problem>()
         val lines = content.split('\n')
@@ -65,7 +74,23 @@ object RpyCheck {
 
             if (inPython || continuation) return@forEachIndexed
 
-            // 4) 缩进必须是 4 空格的倍数（续行/多行字符串已在上面排除）
+            // 4) show/scene/hide 带引号的文件名（常见新手错误，运行时必然报错）
+            if (IMG_STMT_QUOTED.matches(stripped)) {
+                problems.add(
+                    Problem(no, indent + 1, "show/scene/hide 后不能跟带引号的文件名：去掉引号和扩展名，如 scene 87870（图片需在 game/images/ 下）")
+                )
+                return@forEachIndexed
+            }
+
+            // 5) 单独一行的文件名不是语句
+            if (BARE_FILENAME.matches(stripped)) {
+                problems.add(
+                    Problem(no, indent + 1, "单独的文件名不是语句：先定义 image 图片名 = \"文件名\"，再用 show 图片名；或删除该行")
+                )
+                return@forEachIndexed
+            }
+
+            // 6) 缩进必须是 4 空格的倍数（续行/多行字符串已在上面排除）
             if (indent % 4 != 0) {
                 problems.add(Problem(no, 1, "缩进应为 4 空格的倍数（当前 $indent 个空格）"))
             }
@@ -73,7 +98,7 @@ object RpyCheck {
                 problems.add(Problem(no, 1, "使用了 Tab 缩进，Ren'Py 要求 4 空格"))
             }
 
-            // 5) 常见语句缺少结尾冒号
+            // 7) 常见语句缺少结尾冒号
             val lower = stripped.lowercase()
             if (BLOCK_STATEMENTS.any { lower == it || lower.startsWith("$it ") } && !stripped.endsWith(":")) {
                 problems.add(Problem(no, stripped.length + 1, "语句末尾可能缺少冒号「:」"))
